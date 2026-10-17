@@ -1,0 +1,21 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest --cov
+      # the eval suites with the oracle and the gullible model: proves tasks/graders and the security architecture
+      - run: uv run python -m evals.run_eval --reference --k 1
+      - run: uv run python -m evals.run_eval --vulnerable --suite security

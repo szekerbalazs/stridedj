@@ -1,0 +1,31 @@
+# docker compose up -d --build                    → run the Telegram bot in the background
+# docker compose run --rm -it bot auth garmin     → one-time Garmin login inside the container (MFA prompt)
+#
+# Secrets: .env is bind-mounted (never baked into the image). It is writable because Spotify may rotate the refresh
+# token, and the app persists the new one there. Data (SQLite, caches, traces, Garmin session) lives in a named volume.
+services:
+  bot:
+    build: .
+    image: stridedj:latest
+    command: ["bot"]
+    environment:
+      STRIDEDJ_ENV_FILE: /app/.env
+      STRIDEDJ_DATA_DIR: /data
+      GARMIN_TOKEN_DIR: /data/garmin-tokens
+    volumes:
+      - ./.env:/app/.env
+      - stridedj-data:/data
+    restart: unless-stopped
+    read_only: true            # immutable image filesystem; writable: /data, /tmp and the .env bind mount
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "stridedj", "doctor", "--offline"]
+      interval: 5m
+      timeout: 20s
+      retries: 3
+
+volumes:
+  stridedj-data:

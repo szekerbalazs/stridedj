@@ -57,7 +57,7 @@ packages = ["src/stridedj"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-src = ["src", "tests", "evals"]
+src = ["src", "."]
 
 [tool.ruff.lint]
 select = [
@@ -80,7 +80,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "ANN", "PLR2004"]
+"tests/**" = ["S101", "S105", "S106", "S311", "ANN", "PLR2004"]
 "evals/**" = ["S101"]
 "notebooks/**" = ["ANN", "E501"]
 
@@ -90,7 +90,7 @@ python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 mypy_path = "src"
-packages = ["stridedj"]
+files = ["src/stridedj", "evals"]
 warn_unreachable = true
 
 [tool.pydantic-mypy]
