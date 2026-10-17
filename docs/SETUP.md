@@ -87,7 +87,7 @@ Requirements:
    - `garminconnect` is **unofficial**: Garmin's official API is for business partners only. It logs in like the Garmin Connect phone app.
    - If you use two-factor authentication, `stridedj auth garmin` asks for the code once.
    - The session then lives in `~/.garminconnect/garmin_tokens.json` (mode 0600). Treat that file like a password.
-2. **Your HR zones** ("Z2" must mean what it means on your watch):
+2. **Your HR zones** ("Z2" must mean what it means on your watch). With `STRIDEDJ_RUN_SOURCE=garmin` they are **read from Garmin Connect automatically** at startup (the RUNNING profile, else DEFAULT); the `.env` values below are only a fallback:
    1. Find them in the Garmin Connect app (☰ / *More* → **Garmin Devices** → your watch → **User Settings → Heart Rate Zones**) or on connect.garmin.com (profile → *Settings* → *User Settings* / *Heart Rate Zones*).
    2. Note the **upper limit of zones 1, 2, 3 and 4** in bpm, e.g. Z1 ≤ 124, Z2 125–144, Z3 145–159, Z4 160–174, Z5 ≥ 175.
    3. Put the **lower** bound of the next zone into `.env`: `ATHLETE_HR_ZONE_UPPER_BOUNDS=125,145,160,175`. The values are exclusive upper bounds of Z1..Z4.

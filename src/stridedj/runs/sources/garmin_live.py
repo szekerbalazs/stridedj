@@ -44,7 +44,7 @@ from garminconnect import (
 )
 
 from stridedj.config import GarminSettings
-from stridedj.domain import Activity, ActivityId, Lap, LapIntensity
+from stridedj.domain import Activity, ActivityId, HeartRateZones, Lap, LapIntensity
 from stridedj.errors import AuthError, ConfigError, ExternalAPIError
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,8 @@ class GarminApi(Protocol):
     def get_activity_splits(self, activity_id: str) -> Any: ...
 
     def get_activity_hr_in_timezones(self, activity_id: str) -> Any: ...
+
+    def get_heart_rate_zones(self) -> list[dict[str, Any]]: ...
 
 
 class TokenStore(Protocol):
@@ -232,6 +234,28 @@ SESSION_HINT = "session missing or expired; run `stridedj auth garmin`"
 LOGIN_HINT = "login rejected; check GARMIN_EMAIL / GARMIN_PASSWORD and the MFA code"
 
 
+def zones_from_garmin(profiles: Any) -> HeartRateZones | None:
+    """Garmin's per-sport zone settings → our zones. Prefers the RUNNING profile, else DEFAULT.
+
+    Garmin stores the *floor* (inclusive lower bound) of zones 1–5; our model stores the exclusive upper bounds of
+    Z1–Z4, i.e. the floors of zones 2–5. (Below zone1Floor Garmin shows "no zone"; we count it as Z1.)
+    """
+    if not isinstance(profiles, list):
+        return None
+    by_sport = {str(p.get("sport", "")).upper(): p for p in profiles if isinstance(p, Mapping)}
+    profile = by_sport.get("RUNNING") or by_sport.get("DEFAULT")
+    if profile is None:
+        return None
+    raw = [profile.get(f"zone{i}Floor") for i in range(2, 6)]
+    floors = [int(f) for f in raw if isinstance(f, int | float) and f > 0]
+    if len(floors) != 4:
+        return None
+    try:
+        return HeartRateZones(upper_bounds_bpm=(floors[0], floors[1], floors[2], floors[3]))
+    except ValueError:  # not increasing: ignore rather than classify with nonsense zones
+        return None
+
+
 def _translate(exc: Exception, what: str, *, auth_hint: str = SESSION_HINT) -> ExternalAPIError:
     """Library exceptions → ours. Library messages are not forwarded (they may echo request details)."""
     if isinstance(exc, GarminConnectAuthenticationError):
@@ -324,6 +348,18 @@ class GarminLiveSource:
             if activity is not None:
                 activities.append(activity)
         return activities
+
+    async def heart_rate_zones(self) -> HeartRateZones | None:
+        """The zones configured in Garmin Connect (the same ones the watch uses), or None if unavailable."""
+        api = await self._session()
+        try:
+            profiles = await self._call(api.get_heart_rate_zones, what="HR zone settings")
+        except ExternalAPIError as exc:
+            if isinstance(exc, AuthError):
+                raise
+            logger.warning("garmin HR zone settings unavailable; falling back to configured zones")
+            return None
+        return zones_from_garmin(profiles)
 
 
 # ─────────────────────────────── one-time interactive login ───────────────────────────────

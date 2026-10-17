@@ -90,6 +90,19 @@ async def _check_telegram(settings: Settings, client_factory: ClientFactory) -> 
     return CheckResult(name="telegram: bot token", status=CheckStatus.OK, detail=f"bot @{username}")
 
 
+def _zones_check(settings: Settings) -> CheckResult:
+    """With Garmin as the run source the zones are read from Garmin Connect at startup; .env is only the fallback."""
+    if settings.athlete.hr_zone_upper_bounds is not None:
+        return CheckResult(name="athlete: HR zones", status=CheckStatus.OK, detail="fallback set in .env")
+    if settings.app.run_source == "garmin":
+        return CheckResult(name="athlete: HR zones", status=CheckStatus.OK, detail="read from Garmin Connect")
+    return CheckResult(
+        name="athlete: HR zones",
+        status=CheckStatus.MISSING,
+        detail="set ATHLETE_HR_ZONE_UPPER_BOUNDS (or use STRIDEDJ_RUN_SOURCE=garmin)",
+    )
+
+
 def _offline_checks(settings: Settings) -> list[CheckResult]:
     s = settings
     results = [
@@ -116,12 +129,7 @@ def _offline_checks(settings: Settings) -> list[CheckResult]:
             s.garmin.email is not None and s.garmin.password is not None,
             "set GARMIN_EMAIL and GARMIN_PASSWORD (docs/SETUP.md §5)",
         ),
-        _present(
-            "athlete: HR zones",
-            s.athlete.hr_zone_upper_bounds is not None,
-            "set ATHLETE_HR_ZONE_UPPER_BOUNDS from your watch's zones (docs/SETUP.md §5)",
-            ok_detail="Z1..Z4 upper bounds set",
-        ),
+        _zones_check(settings),
     ]
     # OAuth refresh tokens are produced by the login commands (later steps); report them as pending, not missing.
     for name, value, command in (

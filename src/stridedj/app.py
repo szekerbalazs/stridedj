@@ -7,6 +7,7 @@ Spotify. The agent, the harness and the tools are identical in both, which is th
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -20,16 +21,18 @@ from stridedj.cal.demo import InMemoryCalendar
 from stridedj.cal.service import SlotFinderService
 from stridedj.clock import FixedClock, SystemClock
 from stridedj.config import Settings
-from stridedj.domain import TimeSlot
+from stridedj.domain import HeartRateZones, TimeSlot
 from stridedj.harness.approvals import ApprovalStore
 from stridedj.harness.executor import PlanExecutor
 from stridedj.harness.loop import Budget
 from stridedj.llm.base import LLMClient
 from stridedj.music.demo import RecordingPlaylistWriter, build_demo_planner
-from stridedj.ports import CalendarPort, Clock, PlaylistPlanner, PlaylistWriterPort, RunInsights
+from stridedj.ports import CalendarPort, Clock, PlaylistPlanner, PlaylistWriterPort, RunInsights, RunSource
 from stridedj.runs.service import RunInsightsService, zones_from_settings
 from stridedj.runs.sources.demo import DemoRunSource
 from stridedj.runs.store import SqliteRunRepository
+
+log = logging.getLogger(__name__)
 
 DEFAULT_TZ = "Europe/Zurich"
 CalendarKind = Literal["realistic", "empty", "packed_evening"]
@@ -109,6 +112,18 @@ async def build_demo_app(
     )
 
 
+async def resolve_zones(source: RunSource, settings: Settings) -> HeartRateZones:
+    """HR zones from one source of truth: Garmin Connect (what the watch uses), else .env, else defaults."""
+    from stridedj.runs.sources.garmin_live import GarminLiveSource
+
+    if isinstance(source, GarminLiveSource):
+        zones = await source.heart_rate_zones()
+        if zones is not None:
+            log.info("HR zones from Garmin Connect: %s", zones.upper_bounds_bpm)
+            return zones
+    return zones_from_settings(settings.athlete)
+
+
 async def build_live_app(settings: Settings, llm: LLMClient) -> App:
     """The real thing: run source per STRIDEDJ_RUN_SOURCE, Google Calendar, Spotify + ReccoBeats."""
     from stridedj.cal.gcal import GoogleCalendarClient
@@ -120,9 +135,9 @@ async def build_live_app(settings: Settings, llm: LLMClient) -> App:
     settings.app.data_dir.mkdir(parents=True, exist_ok=True)
 
     repository = SqliteRunRepository.from_settings(settings.app)
-    insights = RunInsightsService(
-        build_run_source(settings), repository, zones=zones_from_settings(settings.athlete), clock=clock
-    )
+    source = build_run_source(settings)
+    zones = await resolve_zones(source, settings)
+    insights = RunInsightsService(source, repository, zones=zones, clock=clock)
     await insights.refresh()
 
     def run_windows() -> list[TimeSlot]:
