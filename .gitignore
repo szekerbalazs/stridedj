@@ -1,0 +1,35 @@
+# ── secrets: never commit ──
+.env
+.env.*
+!.env.example
+.secrets/
+client_secret*.json
+token*.json
+*garmin_tokens*.json
+
+# ── personal data: never commit ──
+data/
+traces/
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+
+# ── python / tooling ──
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# ── editors / OS ──
+.DS_Store
+.idea/
+.vscode/
