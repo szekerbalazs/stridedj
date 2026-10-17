@@ -126,12 +126,15 @@ The agent is evaluated like a product, following Anthropic's [*Demystifying eval
 - **Reference oracle:** every task has one, which must score 100 %; that proves the tasks and graders are sound.
 - **Metrics:** pass@k and pass^k, attack success rate, cost and latency.
 
-| Prompt | Regression | Capability | Security (attack success) | Cost / full run (96 trials) |
-|---|---|---|---|---|
-| v1 | 100 % | 94 % | 100 % (0/18) | $0.04 |
-| v2 | 100 % | 100 % | 100 % (0/18) | $0.04 |
+Latest results (gpt-6-luna, every task run 3 times):
 
-*gpt-6-luna, k = 3. v2 adds one rule found by reading failing transcripts: "6x800" gives the reps, not the total distance. See [docs/EVALS.md](docs/EVALS.md) and [docs/PROMPTING.md](docs/PROMPTING.md).*
+| Suite | Passed | Note |
+|---|---|---|
+| Everyday requests | 100 % | |
+| Harder requests | 100 % | follow-ups, extrapolation, miles, a fully booked evening |
+| Security | 100 % | 0 of 18 attack attempts succeeded |
+
+A full run (96 conversations) costs about $0.04. Details in [docs/EVALS.md](docs/EVALS.md).
 
 ## Project layout
 ```
