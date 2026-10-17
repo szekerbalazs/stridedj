@@ -43,7 +43,9 @@ class KeyView(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     label: str
-    detail: str
+    project: str | None
+    masked_key: str | None
+    note: str | None
     is_current: bool
     official_period_usd: float | None
     official_month_usd: float | None
@@ -67,6 +69,16 @@ class DashboardView(BaseModel):
     keys: list[KeyView]
     total_official_month_usd: float | None
     total_ledger_period_usd: float
+
+
+SOURCE_NAMES = {"bot": "Telegram bot", "cli": "terminal chat", "eval": "evals"}
+
+
+def mask_key(redacted: str) -> str:
+    """OpenAI masks keys as 'sk-proj-' + ~150 asterisks + 'dhEA'; show it compactly as 'sk-proj-…dhEA'."""
+    head = redacted.split("*")[0]
+    tail = redacted.split("*")[-1] if "*" in redacted else ""
+    return f"{head}…{tail}" if tail else redacted[:16]
 
 
 def _days(now: datetime, days: int) -> list[date]:
@@ -154,11 +166,9 @@ def build_view(
             views.append(
                 KeyView(
                     label=key_info.name if key_info else key_id,
-                    detail=(
-                        f"{key_info.project_name} · {key_info.redacted_value}"
-                        if key_info
-                        else "key not found in any project"
-                    ),
+                    project=key_info.project_name if key_info else None,
+                    masked_key=mask_key(key_info.redacted_value) if key_info else None,
+                    note=None if key_info else "this key is not listed in any project (deleted?)",
                     is_current=fp is not None and fp == current_fp,
                     official_period_usd=sum(per_day.values()),
                     official_month_usd=sum(v for d, v in per_day.items() if d >= month_start),
@@ -179,8 +189,11 @@ def build_view(
         total, n, avg, hit, by_source = _ledger_stats(runs)
         views.append(
             KeyView(
-                label=f"key ·{fp[:8]}",
-                detail="StrideDJ's own ledger" + ("" if official is None else " · not matched to an official key"),
+                label="StrideDJ's API key" if fp == current_fp else f"Other API key (fingerprint {fp[:8]})",
+                project=None,
+                masked_key=None,
+                note="StrideDJ's own ledger (estimates)"
+                + ("" if official is None else " · could not be matched to an OpenAI key"),
                 is_current=fp == current_fp,
                 official_period_usd=None,
                 official_month_usd=None,
@@ -364,24 +377,38 @@ def _key_section(k: KeyView, days: int) -> str:
         if items
         else ""
     )
-    sources = " · ".join(f"{html.escape(s)} {html.escape(usd(v))}" for s, v in sorted(k.by_source.items()))
+    sources = " · ".join(
+        f"{html.escape(SOURCE_NAMES.get(s, s))} {html.escape(usd(v))}" for s, v in sorted(k.by_source.items())
+    )
     recent = "".join(
-        f"<tr><td>{r.when:%d %b %H:%M}</td><td>{html.escape(r.source)}</td><td>{html.escape(r.model)}</td>"
+        f"<tr><td>{r.when:%d %b %H:%M}</td><td>{html.escape(SOURCE_NAMES.get(r.source, r.source))}</td>"
+        f"<td>{html.escape(r.model)}</td>"
         f"<td class='num'>{r.steps}</td><td class='num'>{r.tool_calls}</td><td class='num'>{r.tokens:,}</td>"
         f"<td class='num'>{html.escape(usd(r.cost_usd))}</td></tr>"
         for r in k.recent
     )
     recent_html = (
-        "<h3>Recent conversations (StrideDJ ledger)</h3><table><thead><tr><th>when (UTC)</th><th>source</th>"
+        "<h3>Recent conversations (StrideDJ ledger)</h3><table><thead><tr><th>when (UTC)</th><th>from</th>"
         "<th>model</th><th class='num'>steps</th><th class='num'>tool calls</th><th class='num'>tokens</th>"
         f"<th class='num'>cost</th></tr></thead><tbody>{recent}</tbody></table>"
-        f"<p class='muted'>Ledger cost by source: {sources or '–'}</p>"
+        f"<p class='muted'>By origin: {sources or '–'}</p>"
         if recent
         else ""
     )
-    badge = '<span class="badge">configured in .env</span>' if k.is_current else ""
+    badge = '<span class="badge"><span class="dot"></span>in use by StrideDJ</span>' if k.is_current else ""
+    meta = []
+    if k.project:
+        meta.append(f"<span>{html.escape(k.project)}</span>")
+    if k.masked_key:
+        meta.append(f'<code class="mask">{html.escape(k.masked_key)}</code>')
+    if k.note:
+        meta.append(f"<span>{html.escape(k.note)}</span>")
+    header = (
+        f'<header class="key-head"><div><h2>{html.escape(k.label)}</h2>'
+        f'<div class="key-meta">{"".join(meta)}</div></div>{badge}</header>'
+    )
     return (
-        f'<section class="key"><h2>{html.escape(k.label)} {badge}</h2><p class="muted">{html.escape(k.detail)}</p>'
+        f'<section class="key">{header}'
         f'<div class="tiles">{"".join(tiles)}</div>'
         f"<figure><figcaption>{html.escape(chart_title)}</figcaption>{_bar_chart(k.daily, title=chart_title)}"
         f"<details><summary>Table view</summary><table><thead><tr><th>day</th><th class='num'>cost</th></tr></thead>"
@@ -429,7 +456,7 @@ def render_html(view: DashboardView) -> str:
     )
     return (
         f"{head}<body><div class='viz-root'><main>"
-        f"<h1>StrideDJ · costs</h1><p class='muted'>{generated} · {html.escape(note)}</p>{hero}"
+        f"<h1>StrideDJ · costs</h1><p class='muted'>{generated}</p>{hero}<p class='note-box'>{html.escape(note)}</p>"
         f"{sections}</main><div class='tooltip' role='status'></div></div>"
         f"<script>{_asset('dashboard.js')}</script></body></html>"
     )

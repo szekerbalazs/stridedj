@@ -44,6 +44,12 @@ def test_ledger_records_and_filters(tmp_path: Path) -> None:
     assert recent[0].run_id == "r3"  # newest first
 
 
+def test_mask_key_is_compact() -> None:
+    from stridedj.costs.dashboard import mask_key
+
+    assert mask_key("sk-proj-" + "*" * 150 + "dhEA") == "sk-proj-…dhEA"
+
+
 def test_redacted_value_matching() -> None:
     assert redacted_matches("sk-proj-****abcd", KEY)
     assert redacted_matches("sk-pr...abcd", KEY)
@@ -116,7 +122,8 @@ def test_view_links_ledger_to_the_official_key_and_html_hides_secrets(tmp_path: 
     assert current.ledger_runs == 1
     assert current.cache_hit_rate == 0.8
     assert "other-app" in labels
-    assert any(label.startswith("key ·feedbeef") for label in labels)  # unmatched ledger key gets its own section
+    assert "Other API key (fingerprint feedbeef)" in labels  # unmatched ledger key gets its own section
+    assert current.masked_key == "sk-proj-…abcd"
     assert view.total_official_month_usd == 1.52
     page = render_html(view)
     assert "SECRETVALUE" not in page
@@ -147,4 +154,7 @@ def test_month_summary_and_formatting(tmp_path: Path) -> None:
     text = month_summary(ledger, key_fp="abcdef123456", now=NOW)
     assert "2 conversation(s)" in text
     assert "$0.0010" in text
+    assert "Telegram bot" in text
+    assert "abcdef" not in text  # no key, no fingerprint in chat
+    assert "No conversations recorded" in month_summary(ledger, key_fp="other", now=NOW)
     assert usd(0) == "$0" and usd(0.5) == "$0.500" and usd(12.3456) == "$12.35"
