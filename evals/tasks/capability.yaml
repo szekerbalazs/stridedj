@@ -1,0 +1,69 @@
+# Capability suite: harder cases (multi-turn edits, extrapolation, unit conversion, no free slot, ambiguity).
+# Expected to start below 100 %: this is the hill to climb when changing prompts or models.
+
+- id: c01-followup-move
+  suite: capability
+  description: A follow-up moves the plan; the second turn is graded.
+  turns: ["10k Z2 tonight", "Make it tomorrow morning instead"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: tomorrow, day_part: morning}
+
+- id: c02-followup-distance
+  suite: capability
+  description: A follow-up changes the distance only.
+  turns: ["8k easy tomorrow evening", "Actually make it 12k"]
+  expect: {kind: proposal, run_type: z2, distance_km: 12, date: tomorrow, day_part: evening}
+
+- id: c03-half-marathon-extrapolation
+  suite: capability
+  description: No recent run that long → the duration must be extrapolated; a long slot must still fit the morning.
+  turns: ["Half marathon at easy pace tomorrow morning"]
+  expect: {kind: proposal, run_type: z2, distance_km: 21.1, date: tomorrow, day_part: morning}
+
+- id: c04-intervals-with-distance
+  suite: capability
+  description: Intervals with a total distance.
+  turns: ["Interval session tomorrow evening, 9 km in total"]
+  expect: {kind: proposal, run_type: intervals, distance_km: 9, date: tomorrow, day_part: evening}
+
+- id: c05-intervals-no-distance
+  suite: capability
+  description: 6x800 says nothing about warm-up/cool-down → ask for the total distance.
+  turns: ["6x800 on Tuesday morning"]
+  expect: {kind: clarification, missing_fields: [distance], max_steps: 2}
+
+- id: c06-miles
+  suite: capability
+  description: Unit conversion (10 miles = 16.1 km).
+  turns: ["10 miles easy tomorrow morning"]
+  expect: {kind: proposal, run_type: z2, distance_km: 16.1, date: tomorrow, day_part: morning}
+
+- id: c07-no-free-slot
+  suite: capability
+  description: The evening is fully booked → no proposal; say so (and offer alternatives).
+  turns: ["10k Z2 tonight"]
+  env: {calendar: packed_evening}
+  expect: {kind: [answer, clarification], must_call: [find_free_slots]}
+
+- id: c08-long-run-sunday
+  suite: capability
+  description: Weekday that is tomorrow.
+  turns: ["Plan my long run for Sunday morning, 18k Z2"]
+  expect: {kind: proposal, run_type: z2, distance_km: 18, date: sunday, day_part: morning}
+
+- id: c09-german-recovery
+  suite: capability
+  description: German, recovery → z1, tonight.
+  turns: ["Kannst du mir für heute Abend einen 7 km Recovery-Lauf planen?"]
+  expect: {kind: proposal, run_type: z1, distance_km: 7, date: today, day_part: evening}
+
+- id: c10-next-saturday
+  suite: capability
+  description: '"Next Saturday" said on a Saturday means in 7 days.'
+  turns: ["15k Z2 next Saturday morning"]
+  expect: {kind: proposal, run_type: z2, distance_km: 15, date: saturday, day_part: morning}
+
+- id: c11-calmer-followup
+  suite: capability
+  description: A follow-up changes only the music mood.
+  turns: ["10k Z2 tonight", "Same run but calmer music please"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: today, day_part: evening, mood: calmer}

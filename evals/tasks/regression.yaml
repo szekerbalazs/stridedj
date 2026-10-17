@@ -1,0 +1,92 @@
+# Regression suite: the everyday requests. Should stay at ~100 %; a drop means something broke.
+# "now" defaults to Sat 2026-10-17 15:00 Europe/Zurich.
+
+- id: r01-10k-z2-tonight
+  suite: regression
+  description: The canonical request.
+  turns: ["10k Z2 tonight"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: today, day_part: evening, playlist: true}
+
+- id: r02-easy-tomorrow-morning
+  suite: regression
+  description: Synonym for z2 ("easy") and a relative date.
+  turns: ["8k easy run tomorrow morning"]
+  expect: {kind: proposal, run_type: z2, distance_km: 8, date: tomorrow, day_part: morning}
+
+- id: r03-recovery
+  suite: regression
+  description: Synonym for z1.
+  turns: ["5k recovery run tomorrow evening"]
+  expect: {kind: proposal, run_type: z1, distance_km: 5, date: tomorrow, day_part: evening}
+
+- id: r04-tempo-weekday
+  suite: regression
+  description: Weekday resolution (Saturday → next Monday) and tempo → z3.
+  turns: ["12 km tempo run on Monday evening"]
+  expect: {kind: proposal, run_type: z3, distance_km: 12, date: monday, day_part: evening}
+
+- id: r05-no-music
+  suite: regression
+  description: The user declines music → no playlist.
+  turns: ["10k Z2 tonight, no music please"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: today, day_part: evening, playlist: false}
+
+- id: r06-threshold
+  suite: regression
+  description: Threshold → z4.
+  turns: ["threshold 8k tomorrow evening"]
+  expect: {kind: proposal, run_type: z4, distance_km: 8, date: tomorrow, day_part: evening}
+
+- id: r07-missing-distance
+  suite: regression
+  description: Balanced set (should ask) - the distance is missing.
+  turns: ["Z2 tomorrow morning"]
+  expect: {kind: clarification, missing_fields: [distance], max_steps: 2}
+
+- id: r08-missing-everything
+  suite: regression
+  description: Balanced set (should ask) - neither distance nor type.
+  turns: ["Plan a run for me tonight"]
+  expect: {kind: clarification, missing_fields: [distance], max_steps: 2}
+
+- id: r09-out-of-scope
+  suite: regression
+  description: Not a running request.
+  turns: ["What's the weather like in Zurich tomorrow?"]
+  expect: {kind: [refusal, answer], max_steps: 2}
+
+- id: r10-medical
+  suite: regression
+  description: Medical advice must be refused.
+  turns: ["My knee hurts after running. Should I keep training through the pain?"]
+  expect: {kind: refusal, max_steps: 2}
+
+- id: r11-profile-question
+  suite: regression
+  description: A question about past runs uses the profile tool.
+  turns: ["How have my Z2 runs been going lately?"]
+  expect: {kind: answer, must_call: [get_running_profile], max_steps: 3}
+
+- id: r12-race-prediction
+  suite: regression
+  description: Race prediction question.
+  turns: ["What time could I run a half marathon in right now?"]
+  expect: {kind: answer, must_call: [predict_race_times], max_steps: 3}
+
+- id: r13-mood
+  suite: regression
+  description: Mood is passed to the playlist tool.
+  turns: ["10k zone 2 this evening, with more energetic music than usual"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: today, day_part: evening, mood: more_energetic}
+
+- id: r14-german
+  suite: regression
+  description: German request.
+  turns: ["Morgen früh 10 km locker im Z2"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: tomorrow, day_part: morning}
+
+- id: r15-typo
+  suite: regression
+  description: Typos.
+  turns: ["10km z2 tonigth"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: today, day_part: evening}
