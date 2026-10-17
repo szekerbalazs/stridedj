@@ -111,3 +111,12 @@ def test_plan_hash_changes_with_content() -> None:
     moved = plan.model_copy(update={"slot": TimeSlot(start=T0 + timedelta(hours=1), end=T0 + timedelta(minutes=135))})
     assert plan.content_hash() == same.content_hash()
     assert plan.content_hash() != moved.content_hash()
+
+
+def test_time_slot_across_dst_change_uses_real_elapsed_time() -> None:
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Europe/Zurich")
+    start = datetime(2026, 10, 25, 1, 0, tzinfo=tz)  # CEST (UTC+2)
+    end = datetime(2026, 10, 25, 4, 0, tzinfo=tz)  # CET (UTC+1): 4 hours later, not 3
+    assert TimeSlot(start=start, end=end).duration_min == 240

@@ -44,6 +44,7 @@ class ReplyKind(StrEnum):
     CLARIFICATION = "clarification"  # something essential is missing or ambiguous
     ANSWER = "answer"  # a question about past runs/predictions was answered
     REFUSAL = "refusal"  # out of scope (medical advice, other users' data, ...)
+    ERROR = "error"  # a tool or service failed; tell the user briefly, without technical details
 
 
 class MissingField(StrEnum):
@@ -101,3 +102,4 @@ class ExecutionResult(Frozen):
     plan_id: PlanId
     calendar_event_id: str | None = None
     playlist_url: str | None = None
+    errors: tuple[str, ...] = Field(default=(), description="user-safe descriptions of actions that failed")

@@ -7,10 +7,20 @@ The LLM sees `PlaylistDraftSummary`, which has no titles.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import Field
 
 from stridedj.domain.base import ArtistId, DraftId, Frozen, TrackId
 from stridedj.domain.runs import RunType
+
+
+class Mood(StrEnum):
+    """How the playlist should feel relative to the user's usual running music (a closed set: no free text)."""
+
+    USUAL = "usual"
+    MORE_ENERGETIC = "more_energetic"
+    CALMER = "calmer"
 
 
 class Track(Frozen):

@@ -49,3 +49,11 @@ def test_invalid_timezone_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ATHLETE_TIMEZONE", "Mars/Olympus")
     with pytest.raises(ValidationError, match="unknown IANA timezone"):
         AthleteSettings()
+
+
+def test_empty_values_count_as_not_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SPOTIFY_REFRESH_TOKEN", "")
+    monkeypatch.setenv("GOOGLE_REFRESH_TOKEN", "")
+    s = load_settings()
+    assert s.spotify.refresh_token is None
+    assert s.google.refresh_token is None

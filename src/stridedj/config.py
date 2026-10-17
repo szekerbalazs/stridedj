@@ -32,7 +32,10 @@ def _split_csv(value: object) -> object:
 
 
 class _EnvSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore", frozen=True)
+    # env_ignore_empty: `KEY=` (an empty line in .env) means "not set", not "set to the empty string"
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore", frozen=True, env_ignore_empty=True
+    )
 
 
 class AppSettings(_EnvSettings):
@@ -52,8 +55,11 @@ class OpenAISettings(_EnvSettings):
     model_config = SettingsConfigDict(env_prefix="OPENAI_")
 
     api_key: SecretStr | None = None
-    model: str = "gpt-5-mini"
+    model: str = "gpt-6-luna"
+    reasoning_effort: Literal["none", "low", "medium", "high"] | None = "low"
+    max_output_tokens: int = Field(default=4000, gt=0)
     request_timeout_s: float = Field(default=60.0, gt=0)
+    max_retries: int = Field(default=2, ge=0, description="SDK-level retries on 429/5xx/connection errors")
 
 
 class TelegramSettings(_EnvSettings):

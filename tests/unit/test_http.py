@@ -111,3 +111,11 @@ def test_retry_after_http_date() -> None:
 def test_backoff_is_capped() -> None:
     policy = RetryPolicy(base_delay_s=1, max_delay_s=5)
     assert all(0 <= backoff_delay(attempt, policy) <= 5 for attempt in range(10))
+
+
+async def test_google_style_403_rate_limit_is_retried() -> None:
+    body = {"error": {"code": 403, "errors": [{"reason": "rateLimitExceeded"}]}}
+    client, seen = _client([httpx.Response(403, json=body), httpx.Response(200)])
+    r = await request_with_retries(client, "GET", "/x", service="google", sleep=Recorder().sleep)
+    assert r.status_code == 200
+    assert len(seen) == 2

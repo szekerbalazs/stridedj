@@ -65,3 +65,16 @@ class CadenceTarget(Frozen):
     trend_spm_per_30d: float | None = Field(
         default=None, description="slope of cadence over time; None if too few runs"
     )
+
+
+class RunningProfile(Frozen):
+    """Aggregate view of the user's recent runs of one type (what `get_running_profile` returns to the LLM)."""
+
+    run_type: RunType
+    lookback_days: int = Field(gt=0)
+    n_runs: int = Field(ge=0)
+    median_distance_km: float | None = None
+    median_pace_s_per_km: float | None = None
+    median_cadence_spm: float | None = None
+    last_run_days_ago: int | None = Field(default=None, ge=0)
+    pace_trend_s_per_km_per_30d: float | None = Field(default=None, description="negative = getting faster")

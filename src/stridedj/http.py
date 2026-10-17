@@ -53,6 +53,18 @@ def retry_after_seconds(headers: Mapping[str, str], *, now: datetime | None = No
     return max(0.0, (when - reference).total_seconds())
 
 
+_RATE_LIMIT_REASONS = ("ratelimitexceeded", "userratelimitexceeded", "quotaexceeded")
+
+
+def _is_rate_limit_403(response: httpx.Response) -> bool:
+    """True for 403s that are really rate limits (Google APIs: error.errors[].reason = rateLimitExceeded, ...)."""
+    try:
+        text = response.text.lower()
+    except UnicodeDecodeError:  # pragma: no cover
+        return False
+    return any(reason in text for reason in _RATE_LIMIT_REASONS)
+
+
 def backoff_delay(attempt: int, policy: RetryPolicy, rng: random.Random | None = None) -> float:
     """Full-jitter exponential backoff for retry number `attempt` (0-based)."""
     cap = min(policy.max_delay_s, policy.base_delay_s * 2**attempt)
@@ -97,6 +109,8 @@ async def request_with_retries(
         status = response.status_code
         if status < 400:
             return response
+        if status == 403 and _is_rate_limit_403(response):  # Google signals rate limits as 403 + reason
+            status = 429
         if status in (401, 403):
             raise AuthError(service, f"{method} {path}: not authorised", status_code=status)
         if status in RETRYABLE_STATUS and may_retry and not last:

@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from pydantic import SecretStr
 
@@ -18,6 +19,14 @@ from stridedj.domain import (
     Activity,
     ArtistId,
     AudioFeatures,
+    CadenceTarget,
+    DurationEstimate,
+    Mood,
+    PlaylistDraft,
+    RacePrediction,
+    RunningProfile,
+    RunType,
+    SlotRequest,
     TimeSlot,
     Track,
     TrackId,
@@ -111,3 +120,43 @@ class CredentialProvider(Protocol):
     """Per-user secrets: backed by `.env` today (single user); a per-user encrypted store later, no core changes."""
 
     def get(self, user_id: UserId, key: CredentialKey) -> SecretStr | None: ...
+
+
+# ─────────────────────────────── application services (what the agent's tools call) ───────────────────────────────
+# These sit between the harness and the data-science modules. The tools depend on these Protocols only, so the agent
+# can be built and evaluated with fakes, and each DS module can evolve (rules → regression → GBM) behind them.
+class RunInsights(Protocol):
+    """Everything the agent can learn about the user's running, as aggregates."""
+
+    async def refresh(self) -> int:
+        """Pull new activities from the RunSource into the store; returns how many were new."""
+        ...
+
+    def profile(self, run_type: RunType, *, now: datetime) -> RunningProfile: ...
+
+    def estimate_duration(self, run_type: RunType, distance_km: float, *, now: datetime) -> DurationEstimate: ...
+
+    def cadence_target(self, run_type: RunType, *, now: datetime) -> CadenceTarget: ...
+
+    def race_predictions(self, *, now: datetime) -> Sequence[RacePrediction]: ...
+
+
+class SlotFinder(Protocol):
+    async def free_slots(
+        self, request: SlotRequest, *, tz: ZoneInfo, now: datetime, max_results: int = 3
+    ) -> Sequence[TimeSlot]:
+        """Free slots of `request.duration_min` on `request.day` within the day part, on a quarter-hour grid,
+        never in the past. Empty if nothing fits."""
+        ...
+
+
+class PlaylistPlanner(Protocol):
+    async def draft(
+        self, *, run_type: RunType, cadence: CadenceTarget, duration_min: float, mood: Mood
+    ) -> PlaylistDraft:
+        """Plan (not create) a playlist of at least `duration_min` minutes matched to the cadence target."""
+        ...
+
+    async def tracks_for(self, draft: PlaylistDraft) -> Sequence[Track]:
+        """The tracks of a draft, for code-rendered display to the user (titles are never shown to the LLM)."""
+        ...
