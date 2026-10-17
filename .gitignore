@@ -9,6 +9,11 @@ token*.json
 
 # ── personal data: never commit ──
 data/
+**/costs.db
+**/costs.html
+**/music_cache.db
+**/music_plays.db
+**/stridedj.db
 traces/
 *.db
 *.sqlite
