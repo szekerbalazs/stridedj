@@ -1,5 +1,9 @@
 # Architecture
 
+![StrideDJ architecture](assets/architecture.svg)
+
+The same structure as a Mermaid graph (renders on GitHub):
+
 ```mermaid
 flowchart LR
     subgraph Phone

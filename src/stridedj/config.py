@@ -126,10 +126,11 @@ class IntervalsIcuSettings(_EnvSettings):
 class AthleteSettings(_EnvSettings):
     model_config = SettingsConfigDict(env_prefix="ATHLETE_")
 
+    # Optional override. Normally the zones are read from Garmin Connect at startup (see app.resolve_zones);
+    # this only matters for non-Garmin run sources, where the defaults would be used otherwise.
     hr_zone_upper_bounds: Annotated[tuple[int, int, int, int] | None, NoDecode] = Field(
         default=None, description="Exclusive upper bounds (bpm) of Z1..Z4, as configured on the watch"
     )
-    max_hr: int | None = Field(default=None, ge=120, le=230)
     timezone: str = "Europe/Zurich"
 
     @field_validator("hr_zone_upper_bounds", mode="before")

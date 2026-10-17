@@ -91,16 +91,14 @@ async def _check_telegram(settings: Settings, client_factory: ClientFactory) -> 
 
 
 def _zones_check(settings: Settings) -> CheckResult:
-    """With Garmin as the run source the zones are read from Garmin Connect at startup; .env is only the fallback."""
-    if settings.athlete.hr_zone_upper_bounds is not None:
-        return CheckResult(name="athlete: HR zones", status=CheckStatus.OK, detail="fallback set in .env")
+    """HR zones come from Garmin Connect at startup; other sources use the override or the default zones."""
     if settings.app.run_source == "garmin":
-        return CheckResult(name="athlete: HR zones", status=CheckStatus.OK, detail="read from Garmin Connect")
-    return CheckResult(
-        name="athlete: HR zones",
-        status=CheckStatus.MISSING,
-        detail="set ATHLETE_HR_ZONE_UPPER_BOUNDS (or use STRIDEDJ_RUN_SOURCE=garmin)",
-    )
+        detail = "read from Garmin Connect at startup"
+    elif settings.athlete.hr_zone_upper_bounds is not None:
+        detail = "from ATHLETE_HR_ZONE_UPPER_BOUNDS"
+    else:
+        detail = "default zones (no Garmin source)"
+    return CheckResult(name="athlete: HR zones", status=CheckStatus.OK, detail=detail)
 
 
 def _offline_checks(settings: Settings) -> list[CheckResult]:

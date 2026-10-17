@@ -29,6 +29,10 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/szekerbalazs/stridedj"
+Documentation = "https://github.com/szekerbalazs/stridedj/tree/main/docs"
+
 [project.scripts]
 stridedj = "stridedj.cli:app"
 

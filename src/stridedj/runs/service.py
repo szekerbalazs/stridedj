@@ -49,7 +49,8 @@ def zones_from_settings(athlete: AthleteSettings) -> HeartRateZones:
     """The athlete's watch zones; the defaults (125, 145, 160, 175) bpm when none are configured.
 
     The defaults fit a runner with a max HR around 190. With a very different max HR the typing of runs (and so
-    every per-type statistic) will be off; `stridedj doctor` should nudge the user to set ATHLETE_HR_ZONE_UPPER_BOUNDS.
+    every per-type statistic) will be off. With Garmin as the source, the zones are read from Garmin Connect instead
+    (`app.resolve_zones`); this function is the fallback for other sources.
     """
     if athlete.hr_zone_upper_bounds is None:
         return DEFAULT_HR_ZONES
