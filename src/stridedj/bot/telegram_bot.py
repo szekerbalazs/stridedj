@@ -1,3 +1,130 @@
-"""Telegram front-end: long polling, user allowlist, Approve/Cancel buttons; renders `AgentReply` with code, not the
-LLM.
+"""Telegram front-end (python-telegram-bot, long polling).
+
+Long polling means the bot opens the connection to Telegram (outbound only): no public URL, no TLS certificate, no
+webhook secret to manage, and the container needs no inbound port. A webhook is the better fit for serverless
+hosting or many users (see docs/HOSTING.md).
+
+Per message: guard (private chat, allowlist, secret detection, length, rate) → agent → reply rendered by code.
+Buttons carry only a random approval token (`a:<token>` / `c:<token>`, under Telegram's 64-byte limit).
 """
+
+from __future__ import annotations
+
+import html
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction, ChatType, ParseMode
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+
+from stridedj.app import App
+from stridedj.bot.render import render_execution, render_proposal
+from stridedj.domain import ReplyKind, UserContext, UserId
+from stridedj.errors import ApprovalError
+from stridedj.harness.guard import InputGuard
+
+log = logging.getLogger(__name__)
+
+WELCOME = (
+    "Hi! I'm StrideDJ. Tell me what you want to run, e.g. <i>10k Z2 tonight</i> or "
+    "<i>intervals tomorrow morning, 8 km</i>. I'll find a slot in your calendar and a playlist matched to your "
+    "cadence. Nothing is booked until you tap Approve."
+)
+
+
+class TelegramBot:
+    def __init__(self, *, token: str, guard: InputGuard, app_factory: Callable[[], Awaitable[App]]) -> None:
+        self._guard = guard
+        self._app_factory = app_factory
+        self._stride: App | None = None
+        # The agent is built inside PTB's own event loop (post_init), so its async clients belong to that loop.
+        self._app = Application.builder().token(token).post_init(self._post_init).build()
+        self._app.add_handler(CommandHandler("start", self._on_start))
+        self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text))
+        self._app.add_handler(CallbackQueryHandler(self._on_button))
+
+    async def _post_init(self, _: Application[Any, Any, Any, Any, Any, Any]) -> None:
+        self._stride = await self._app_factory()
+        log.info("StrideDJ ready (timezone %s)", self._stride.timezone)
+
+    @property
+    def _s(self) -> App:
+        if self._stride is None:
+            raise RuntimeError("bot not initialised")
+        return self._stride
+
+    def run(self) -> None:
+        """Blocking: poll Telegram until interrupted."""
+        self._app.run_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY], drop_pending_updates=True)
+
+    def _user(self, telegram_user_id: int) -> UserContext:
+        return UserContext(user_id=UserId(f"tg:{telegram_user_id}"), timezone=self._s.timezone)
+
+    async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_user is None or update.message is None:
+            return
+        decision = self._guard.check(user_id=update.effective_user.id, text="/start")
+        await update.message.reply_text(
+            WELCOME if decision.allowed else (decision.notice or ""), parse_mode=ParseMode.HTML
+        )
+
+    async def _on_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message, sender, chat = update.message, update.effective_user, update.effective_chat
+        if message is None or sender is None or chat is None or message.text is None:
+            return
+        if chat.type != ChatType.PRIVATE:
+            return  # never act in groups: other members' messages would be untrusted input
+        decision = self._guard.check(user_id=sender.id, text=message.text)
+        if not decision.allowed:
+            log.info("blocked message: %s", decision.reason)
+            if decision.reason == "secret_detected":
+                try:
+                    await message.delete()
+                except Exception:
+                    log.warning("could not delete a message containing a secret")
+            if decision.notice:
+                await chat.send_message(decision.notice)
+            return
+
+        await chat.send_action(ChatAction.TYPING)
+        user = self._user(sender.id)
+        response = await self._s.agent.handle(user, message.text)
+        text = html.escape(response.reply.message, quote=False)
+        if response.reply.kind is ReplyKind.PROPOSAL and response.plan is not None and response.approval_token:
+            tracks = await self._s.playlists.tracks_for(response.plan.playlist) if response.plan.playlist else []
+            card = render_proposal(response.plan, tracks, user.tz, rich=True)
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("✅ Approve", callback_data=f"a:{response.approval_token}"),
+                        InlineKeyboardButton("✖ Cancel", callback_data=f"c:{response.approval_token}"),
+                    ]
+                ]
+            )
+            await message.reply_text(f"{text}\n\n{card}", parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        else:
+            await message.reply_text(text, parse_mode=ParseMode.HTML)
+
+    async def _on_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query, chat = update.callback_query, update.effective_chat
+        if query is None or query.data is None or query.from_user is None or chat is None:
+            return
+        await query.answer()
+        action, _, token = query.data.partition(":")
+        user_id = self._user(query.from_user.id).user_id
+        if action == "c":
+            self._s.agent.cancel(token, user_id=user_id)
+            await query.edit_message_reply_markup(reply_markup=None)
+            await chat.send_message("Cancelled. Nothing was booked.")
+            return
+        if action != "a":
+            return
+        try:
+            result = await self._s.agent.approve(token, user_id=user_id)
+        except ApprovalError as exc:
+            await chat.send_message(f"Can't do that: {exc}")
+            return
+        await query.edit_message_reply_markup(reply_markup=None)
+        await chat.send_message(render_execution(result, rich=True), parse_mode=ParseMode.HTML)
