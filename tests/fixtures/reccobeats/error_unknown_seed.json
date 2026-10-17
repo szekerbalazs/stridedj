@@ -1,0 +1,6 @@
+{
+  "timestamp": "2026-10-17T10:38:24.037+00:00",
+  "error": "Cannot find any track for given seed ids, seeds need at least one track",
+  "path": "uri=/v1/track/recommendation",
+  "status": 4002
+}

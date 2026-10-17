@@ -1,0 +1,73 @@
+{
+  "content": [
+    {
+      "id": "4451331f-dfeb-4761-965b-26c4ea85ace6",
+      "trackTitle": "Me Caiu Tão Bem - Ao Vivo",
+      "artists": [
+        {
+          "id": "2113aa56-0946-444d-8d9a-3a0f5f16b337",
+          "name": "Murilo Huff",
+          "href": "https://open.spotify.com/artist/3hq7WoPJsrRP0KMSLhUgRz"
+        },
+        {
+          "id": "3b01d7cb-b8da-47ac-bae2-996e364c430e",
+          "name": "Gustavo Mioto",
+          "href": "https://open.spotify.com/artist/1X6ORK7IekgmyjV6IFPszP"
+        }
+      ],
+      "durationMs": 156146,
+      "isrc": "BKMWS2300023",
+      "ean": null,
+      "upc": null,
+      "href": "https://open.spotify.com/track/4bCihe7lYpnerhvpYhTrpx",
+      "availableCountries": "CH,DE,US",
+      "popularity": 62
+    },
+    {
+      "id": "7657cee7-e84e-41ac-baa6-6baeeb595ff1",
+      "trackTitle": "Spendin (feat. Marracash)",
+      "artists": [
+        {
+          "id": "9d11b8cb-6f66-44f8-ba72-7cee98284c57",
+          "name": "Guè",
+          "href": "https://open.spotify.com/artist/7F2utINZ6tSokSiZTQBE27"
+        },
+        {
+          "id": "870748c6-9525-4465-ac9f-a9ded4a15a31",
+          "name": "Cookin Soul",
+          "href": "https://open.spotify.com/artist/06s35sbFfZJUEwFjAaZfiW"
+        },
+        {
+          "id": "83f30549-e0a7-4f99-a224-efb9a97dcb4b",
+          "name": "Marracash",
+          "href": "https://open.spotify.com/artist/5AZuEF0feCXMkUCwQiQlW7"
+        }
+      ],
+      "durationMs": 162400,
+      "isrc": "ITUM72501024",
+      "ean": null,
+      "upc": null,
+      "href": "https://open.spotify.com/track/0ek2jtO8Ru1YrVImYFLSuW",
+      "availableCountries": "CH,DE,US",
+      "popularity": 67
+    },
+    {
+      "id": "d3d5173e-4446-4cfc-af06-6751ee0a1536",
+      "trackTitle": "Angin Rindu",
+      "artists": [
+        {
+          "id": "d42d3ccf-2b30-4d4d-bbc7-ad44075aba68",
+          "name": "Rony Parulian",
+          "href": "https://open.spotify.com/artist/13y29W8mEcA2gKqUr1SPLJ"
+        }
+      ],
+      "durationMs": 258148,
+      "isrc": "IDUM72400134",
+      "ean": null,
+      "upc": null,
+      "href": "https://open.spotify.com/track/6JDLpBIjNMKCHRsw1ffsUy",
+      "availableCountries": "CH,DE,US",
+      "popularity": 74
+    }
+  ]
+}

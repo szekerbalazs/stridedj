@@ -1,0 +1,40 @@
+{
+  "content": [
+    {
+      "id": "636463ea-c943-44d5-b600-1fa6f3ad8057",
+      "trackTitle": "Mr. Brightside",
+      "artists": [
+        {
+          "id": "e40d9fb3-6803-422a-b227-085b34b437b2",
+          "name": "The Killers",
+          "href": "https://open.spotify.com/artist/0C0XlULifJtAgn6ZNCW2eu"
+        }
+      ],
+      "durationMs": 222200,
+      "isrc": "GBFFP0300052",
+      "ean": null,
+      "upc": null,
+      "href": "https://open.spotify.com/track/3n3Ppam7vgaVa1iaRUc9Lp",
+      "availableCountries": "CH,DE,US",
+      "popularity": 61
+    },
+    {
+      "id": "25c8ca63-5895-4572-84eb-a7040bc08c4d",
+      "trackTitle": "Blinding Lights",
+      "artists": [
+        {
+          "id": "9451b6b2-8746-4d43-abd7-c355ed1e3048",
+          "name": "The Weeknd",
+          "href": "https://open.spotify.com/artist/1Xyo4u8uXC1ZmMpatF05PJ"
+        }
+      ],
+      "durationMs": 200040,
+      "isrc": "USUG11904206",
+      "ean": null,
+      "upc": null,
+      "href": "https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b",
+      "availableCountries": "CH,DE,US",
+      "popularity": 87
+    }
+  ]
+}
