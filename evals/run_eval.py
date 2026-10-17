@@ -21,9 +21,11 @@ from evals.graders import Grade, TrialRecord, grade
 from evals.metrics import pass_at_k, pass_hat_k, percentile
 from evals.reference import reference_policy
 from evals.tasks import Task, load_tasks
+from stridedj.agent.service import PROMPTS_DIR
 from stridedj.app import build_demo_app
 from stridedj.config import load_settings
 from stridedj.domain import UserContext, UserId
+from stridedj.harness.context import Prompt
 from stridedj.llm.base import LLMClient
 from stridedj.llm.fake import ScriptedLLM, VulnerableLLM
 from stridedj.llm.openai_client import OpenAIResponsesClient
@@ -47,9 +49,15 @@ class TrialResult(BaseModel):
     reply_message: str
 
 
-async def run_trial(task: Task, trial: int, llm_factory: LLMFactory, out_dir: Path) -> TrialResult:
+async def run_trial(
+    task: Task, trial: int, llm_factory: LLMFactory, out_dir: Path, prompt: Prompt | None = None
+) -> TrialResult:
     app = await build_demo_app(
-        llm_factory(task), now=task.now, calendar=task.env.calendar, poisoned_calendar=task.env.poisoned_calendar
+        llm_factory(task),
+        now=task.now,
+        calendar=task.env.calendar,
+        poisoned_calendar=task.env.poisoned_calendar,
+        prompt=prompt,
     )
     user = UserContext(user_id=UserId(f"eval-{task.id}-{trial}"), timezone=app.timezone)
     responses = [await app.agent.handle(user, turn) for turn in task.turns]
@@ -84,13 +92,13 @@ async def run_trial(task: Task, trial: int, llm_factory: LLMFactory, out_dir: Pa
 
 
 async def run_all(
-    tasks: list[Task], k: int, llm_factory: LLMFactory, out_dir: Path, concurrency: int
+    tasks: list[Task], k: int, llm_factory: LLMFactory, out_dir: Path, concurrency: int, prompt: Prompt | None = None
 ) -> list[TrialResult]:
     semaphore = asyncio.Semaphore(concurrency)
 
     async def guarded(task: Task, trial: int) -> TrialResult:
         async with semaphore:
-            return await run_trial(task, trial, llm_factory, out_dir)
+            return await run_trial(task, trial, llm_factory, out_dir, prompt)
 
     return list(await asyncio.gather(*(guarded(t, i) for t in tasks for i in range(k))))
 
@@ -156,6 +164,7 @@ def main() -> None:
     parser.add_argument("--suite", action="append", choices=["regression", "capability", "security"])
     parser.add_argument("--task", action="append", help="only these task ids")
     parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument("--prompt", help="system prompt version, e.g. system_v1 (default: the agent's current one)")
     parser.add_argument("--fail-under", type=float, default=None, help="exit 1 if the trial pass rate is below this")
     args = parser.parse_args()
 
@@ -174,8 +183,10 @@ def main() -> None:
         client = OpenAIResponsesClient.from_settings(settings)
         factory, label = (lambda task: client), settings.model
 
+    prompt = Prompt.load(PROMPTS_DIR / f"{args.prompt}.md") if args.prompt else None
+    label = f"{label}_{args.prompt}" if args.prompt else label
     out_dir = RUNS_DIR / f"{datetime.now(UTC):%Y%m%dT%H%M%S}_{label}"
-    results = asyncio.run(run_all(tasks, args.k, factory, out_dir, args.concurrency))
+    results = asyncio.run(run_all(tasks, args.k, factory, out_dir, args.concurrency, prompt))
     text = report(results, k=args.k, label=label)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "report.md").write_text(text)

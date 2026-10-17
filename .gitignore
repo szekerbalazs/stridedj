@@ -34,3 +34,6 @@ htmlcov/
 .idea/
 .vscode/
 evals/runs/
+
+# logs
+*.log

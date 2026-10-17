@@ -23,6 +23,7 @@ from stridedj.clock import FixedClock, SystemClock
 from stridedj.config import Settings
 from stridedj.domain import HeartRateZones, TimeSlot
 from stridedj.harness.approvals import ApprovalStore
+from stridedj.harness.context import Prompt
 from stridedj.harness.executor import PlanExecutor
 from stridedj.harness.loop import Budget
 from stridedj.llm.base import LLMClient
@@ -69,6 +70,7 @@ async def build_demo_app(
     data_dir: Path | None = None,
     traces_dir: Path | None = None,
     budget: Budget | None = None,
+    prompt: Prompt | None = None,
 ) -> DemoApp:
     """A fully offline app with a frozen clock. Every call builds fresh state (eval trials are isolated)."""
     tz = ZoneInfo(timezone)
@@ -98,6 +100,7 @@ async def build_demo_app(
         executor=PlanExecutor(calendar=cal, playlists=writer, tz=tz),
         budget=budget,
         traces_dir=traces_dir,
+        prompt=prompt,
     )
     return DemoApp(
         agent=agent,
