@@ -69,6 +69,37 @@ async def _check_openai(settings: Settings, client_factory: ClientFactory) -> Ch
     return CheckResult(name="openai: api key", status=CheckStatus.OK, detail=f"key valid, model {model!r} available")
 
 
+async def _check_openai_admin(settings: Settings, client_factory: ClientFactory) -> CheckResult:
+    """Optional Admin key (exact per-key costs in `stridedj costs`). Checked with a 1-day costs query."""
+    key = settings.openai.admin_key
+    if key is None:
+        return CheckResult(
+            name="openai: admin key",
+            status=CheckStatus.PENDING,
+            detail="optional: set OPENAI_ADMIN_KEY for billed costs per key",
+        )
+    import time
+
+    async with client_factory() as client:
+        try:
+            await request_with_retries(
+                client,
+                "GET",
+                "https://api.openai.com/v1/organization/costs",
+                service="openai-admin",
+                policy=_NO_RETRY,
+                headers={"Authorization": f"Bearer {key.get_secret_value()}"},
+                params={"start_time": int(time.time()) - 86_400, "limit": 1},
+            )
+        except AuthError:
+            return CheckResult(
+                name="openai: admin key", status=CheckStatus.FAILED, detail="admin key rejected (401/403)"
+            )
+        except ExternalAPIError as exc:
+            return CheckResult(name="openai: admin key", status=CheckStatus.FAILED, detail=str(exc))
+    return CheckResult(name="openai: admin key", status=CheckStatus.OK, detail="costs readable")
+
+
 async def _check_telegram(settings: Settings, client_factory: ClientFactory) -> CheckResult:
     token = settings.telegram.bot_token
     if token is None:
@@ -160,6 +191,7 @@ async def run_checks(
     results: list[CheckResult] = []
     if live:
         results.append(await _check_openai(settings, factory))
+        results.append(await _check_openai_admin(settings, factory))
         results.append(await _check_telegram(settings, factory))
     else:
         results.append(_present("openai: api key", settings.openai.api_key is not None, "set OPENAI_API_KEY"))

@@ -83,3 +83,20 @@ async def test_track_titles_never_reach_the_model() -> None:
     outputs = " ".join(str(e.data.get("output", "")) for e in response.outcome.transcript.tool_events())
     for track in tracks:
         assert track.name not in outputs
+
+
+async def test_every_run_is_reported_to_the_usage_sink() -> None:
+    from evals.tasks import load_tasks as _load
+    from stridedj.harness.tracing import Transcript
+
+    recorded: list[Transcript] = []
+
+    class Sink:
+        def record(self, transcript: Transcript) -> None:
+            recorded.append(transcript)
+
+    task = next(t for t in _load() if t.id == "r01-10k-z2-tonight")
+    app = await build_demo_app(ScriptedLLM(reference_policy(task)), now=NOW, usage_sink=Sink())
+    await app.agent.handle(USER, "10k Z2 tonight")
+    assert len(recorded) == 1
+    assert recorded[0].steps >= 1

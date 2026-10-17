@@ -35,13 +35,22 @@ WELCOME = (
 
 
 class TelegramBot:
-    def __init__(self, *, token: str, guard: InputGuard, app_factory: Callable[[], Awaitable[App]]) -> None:
+    def __init__(
+        self,
+        *,
+        token: str,
+        guard: InputGuard,
+        app_factory: Callable[[], Awaitable[App]],
+        costs_summary: Callable[[], str] | None = None,
+    ) -> None:
         self._guard = guard
         self._app_factory = app_factory
+        self._costs_summary = costs_summary
         self._stride: App | None = None
         # The agent is built inside PTB's own event loop (post_init), so its async clients belong to that loop.
         self._app = Application.builder().token(token).post_init(self._post_init).build()
         self._app.add_handler(CommandHandler("start", self._on_start))
+        self._app.add_handler(CommandHandler("costs", self._on_costs))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text))
         self._app.add_handler(CallbackQueryHandler(self._on_button))
 
@@ -69,6 +78,18 @@ class TelegramBot:
         await update.message.reply_text(
             WELCOME if decision.allowed else (decision.notice or ""), parse_mode=ParseMode.HTML
         )
+
+    async def _on_costs(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """`/costs`: this month's StrideDJ spend from the ledger (allowlisted users only)."""
+        if update.effective_user is None or update.message is None:
+            return
+        decision = self._guard.check(user_id=update.effective_user.id, text="/costs")
+        if not decision.allowed:
+            if decision.notice:
+                await update.message.reply_text(decision.notice)
+            return
+        text = self._costs_summary() if self._costs_summary else "Cost tracking is not configured."
+        await update.message.reply_text(text)
 
     async def _on_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message, sender, chat = update.message, update.effective_user, update.effective_chat

@@ -21,6 +21,7 @@ from stridedj.cal.demo import InMemoryCalendar
 from stridedj.cal.service import SlotFinderService
 from stridedj.clock import FixedClock, SystemClock
 from stridedj.config import Settings
+from stridedj.costs.ledger import UsageSink
 from stridedj.domain import HeartRateZones, TimeSlot
 from stridedj.harness.approvals import ApprovalStore
 from stridedj.harness.context import Prompt
@@ -71,6 +72,7 @@ async def build_demo_app(
     traces_dir: Path | None = None,
     budget: Budget | None = None,
     prompt: Prompt | None = None,
+    usage_sink: UsageSink | None = None,
 ) -> DemoApp:
     """A fully offline app with a frozen clock. Every call builds fresh state (eval trials are isolated)."""
     tz = ZoneInfo(timezone)
@@ -101,6 +103,7 @@ async def build_demo_app(
         budget=budget,
         traces_dir=traces_dir,
         prompt=prompt,
+        usage_sink=usage_sink,
     )
     return DemoApp(
         agent=agent,
@@ -127,7 +130,7 @@ async def resolve_zones(source: RunSource, settings: Settings) -> HeartRateZones
     return zones_from_settings(settings.athlete)
 
 
-async def build_live_app(settings: Settings, llm: LLMClient) -> App:
+async def build_live_app(settings: Settings, llm: LLMClient, *, usage_sink: UsageSink | None = None) -> App:
     """The real thing: run source per STRIDEDJ_RUN_SOURCE, Google Calendar, Spotify + ReccoBeats."""
     from stridedj.cal.gcal import GoogleCalendarClient
     from stridedj.music.live import build_live_music
@@ -159,6 +162,7 @@ async def build_live_app(settings: Settings, llm: LLMClient) -> App:
         approvals=ApprovalStore(clock=clock),
         executor=PlanExecutor(calendar=calendar, playlists=writer, tz=tz),
         traces_dir=settings.app.data_dir / "traces",
+        usage_sink=usage_sink,
     )
     return App(
         agent=agent,

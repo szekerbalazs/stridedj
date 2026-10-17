@@ -38,6 +38,13 @@ ChatGPT subscriptions do **not** include API usage; the API is billed separately
 
 ✅ `make doctor` → `openai: api key ✓`. **You can now run the demo:** `make demo`.
 
+**Optional: an Admin key for exact per-key costs** (`uv run stridedj costs`).
+1. platform.openai.com → **Settings → Organization → Admin keys → Create**. Only organization **owners** can create one; on a personal account, that's you. If it offers permissions, choose read-only / *Usage*.
+2. `.env`: `OPENAI_ADMIN_KEY=sk-admin-...`
+3. Treat it as the most sensitive secret here: it can manage your organization. StrideDJ uses it only in the `costs` command, never in the bot.
+
+Without it, the dashboard shows StrideDJ's own ledger (estimates from token counts).
+
 ## 2. Telegram bot
 1. In Telegram, open **@BotFather** → `/newbot` → pick a name and a username ending in `bot`.
 2. Copy the token (`1234567890:AA...`) → `.env`: `TELEGRAM_BOT_TOKEN=...`

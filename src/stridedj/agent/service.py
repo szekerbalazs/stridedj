@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from stridedj.agent.session import AgentSession
 from stridedj.agent.tools import AgentDeps, build_tools
+from stridedj.costs.ledger import UsageSink
 from stridedj.domain import AgentReply, ExecutionResult, PlanId, ReplyKind, RunPlan, UserContext, UserId
 from stridedj.harness.approvals import ApprovalStore
 from stridedj.harness.context import Prompt, compose_instructions, history_items
@@ -51,6 +52,7 @@ class StrideAgent:
         budget: Budget | None = None,
         traces_dir: Path | None = None,
         tools_factory: Callable[[AgentDeps, AgentSession], ToolRegistry] = build_tools,
+        usage_sink: UsageSink | None = None,
     ) -> None:
         self._llm = llm
         self._deps = deps
@@ -60,6 +62,7 @@ class StrideAgent:
         self._budget = budget or Budget()
         self._traces_dir = traces_dir
         self._tools_factory = tools_factory
+        self._usage_sink = usage_sink
         self._sessions: dict[UserId, AgentSession] = {}
 
     @property
@@ -108,6 +111,11 @@ class StrideAgent:
         )
         if self._traces_dir is not None:
             outcome.transcript.save(self._traces_dir)
+        if self._usage_sink is not None:
+            try:
+                self._usage_sink.record(outcome.transcript)
+            except Exception:  # accounting must never break a conversation
+                log.exception("could not record usage")
         session.history.append((text, outcome.reply.message))
 
         plan: RunPlan | None = None

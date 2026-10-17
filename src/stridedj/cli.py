@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -17,6 +18,8 @@ from stridedj.app import App, build_demo_app, build_live_app
 from stridedj.auth import Service, login
 from stridedj.bot.render import render_execution, render_proposal
 from stridedj.config import Settings, load_settings
+from stridedj.costs.ledger import CostLedger, Source, UsageSink, default_ledger_path, key_fingerprint
+from stridedj.costs.summary import month_summary
 from stridedj.doctor import CheckStatus, run_checks
 from stridedj.domain import ReplyKind, UserContext, UserId
 from stridedj.errors import ApprovalError
@@ -65,14 +68,27 @@ def auth(service: Annotated[Service, typer.Argument(help="garmin | spotify | goo
     login(service)
 
 
-async def _build(settings: Settings, data: DataMode, model: str | None) -> App:
+def _ledger_sink(settings: Settings, source: Source) -> UsageSink | None:
+    """Every conversation is recorded in the cost ledger, under a fingerprint of the API key in use."""
+    if settings.openai.api_key is None:
+        return None
+    ledger = CostLedger(default_ledger_path(settings.app.data_dir))
+    return ledger.sink(key_fp=key_fingerprint(settings.openai.api_key.get_secret_value()), source=source)
+
+
+async def _build(settings: Settings, data: DataMode, model: str | None, *, source: Source) -> App:
     openai_settings = settings.openai.model_copy(update={"model": model}) if model else settings.openai
     llm = OpenAIResponsesClient.from_settings(openai_settings)
+    sink = _ledger_sink(settings, source)
     if data is DataMode.DEMO:
         return await build_demo_app(
-            llm, now=datetime.now(UTC), timezone=settings.athlete.timezone, traces_dir=settings.app.data_dir / "traces"
+            llm,
+            now=datetime.now(UTC),
+            timezone=settings.athlete.timezone,
+            traces_dir=settings.app.data_dir / "traces",
+            usage_sink=sink,
         )
-    return await build_live_app(settings, llm)
+    return await build_live_app(settings, llm, usage_sink=sink)
 
 
 async def _chat_loop(app_: App) -> None:
@@ -114,7 +130,7 @@ def chat(
     settings = load_settings()
 
     async def main() -> None:
-        await _chat_loop(await _build(settings, data, model))
+        await _chat_loop(await _build(settings, data, model, source="cli"))
 
     asyncio.run(main())
 
@@ -137,11 +153,51 @@ def bot(
     if settings.telegram.bot_token is None or not settings.telegram.allowed_user_ids:
         console.print("[red]Set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USER_IDS first (docs/SETUP.md §2).[/]")
         raise typer.Exit(code=1)
+    costs: Callable[[], str] | None = None
+    if settings.openai.api_key is not None:
+        ledger = CostLedger(default_ledger_path(settings.app.data_dir))
+        fingerprint = key_fingerprint(settings.openai.api_key.get_secret_value())
+        costs = lambda: month_summary(ledger, key_fp=fingerprint)  # noqa: E731
     TelegramBot(
         token=settings.telegram.bot_token.get_secret_value(),
         guard=InputGuard(allowed_user_ids=set(settings.telegram.allowed_user_ids), clock=SystemClock()),
-        app_factory=lambda: _build(settings, data, model),
+        app_factory=lambda: _build(settings, data, model, source="bot"),
+        costs_summary=costs,
     ).run()
+
+
+@app.command()
+def costs(
+    days: Annotated[int, typer.Option(help="how many days back")] = 30,
+    html_out: Annotated[bool, typer.Option("--html/--no-html", help="write the HTML dashboard")] = True,
+    open_browser: Annotated[bool, typer.Option("--open/--no-open", help="open the dashboard in the browser")] = True,
+) -> None:
+    """Cost dashboard: OpenAI's billed costs per API key (with OPENAI_ADMIN_KEY) + StrideDJ's own ledger."""
+    import webbrowser
+
+    from stridedj.costs.dashboard import build_view, render_html, render_terminal
+    from stridedj.costs.openai_costs import OfficialCosts, fetch_official_costs
+    from stridedj.errors import StrideDJError
+
+    settings = load_settings()
+    ledger = CostLedger(default_ledger_path(settings.app.data_dir))
+    now = datetime.now(UTC)
+    runs = ledger.runs(since=now - timedelta(days=days))
+    official: OfficialCosts | None = None
+    if settings.openai.admin_key is not None:
+        try:
+            official = asyncio.run(fetch_official_costs(settings.openai.admin_key, days=days, now=now))
+        except StrideDJError as exc:
+            console.print(f"[yellow]Official costs unavailable ({exc}); showing the ledger only.[/]")
+    view = build_view(ledger_runs=runs, official=official, current_key=settings.openai.api_key, days=days, now=now)
+    render_terminal(view, console)
+    if html_out:
+        path = settings.app.data_dir / "costs.html"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_html(view), encoding="utf-8")
+        console.print(f"Dashboard: {path}")
+        if open_browser:
+            webbrowser.open(path.as_uri())
 
 
 @app.command()

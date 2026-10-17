@@ -91,6 +91,7 @@ All configuration and secrets live in `.env`, which is git- and docker-ignored. 
 |---|---|---|
 | `OPENAI_API_KEY` | always | platform.openai.com → API keys |
 | `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT` | no | defaults `gpt-6-luna`, `low` |
+| `OPENAI_ADMIN_KEY` | no | platform.openai.com → Settings → Organization → Admin keys (only for `stridedj costs`) |
 | `TELEGRAM_BOT_TOKEN` | for the bot | @BotFather |
 | `TELEGRAM_ALLOWED_USER_IDS` | for the bot | @userinfobot (numeric ids, comma-separated) |
 | `SPOTIFY_CLIENT_ID` | live mode | Spotify dashboard → your app |
@@ -112,8 +113,18 @@ All configuration and secrets live in `.env`, which is git- and docker-ignored. 
 | `make bot` | Telegram bot (`--data demo` also works) |
 | `uv run stridedj auth <garmin\|spotify\|google>` | one-time logins |
 | `make doctor` / `make smoke` | credential check / live read-only integration check |
+| `uv run stridedj costs` | cost dashboard per API key (terminal + HTML); `/costs` in Telegram |
 | `make eval-reference` / `make eval` | evals with the oracle (free) / with the real model (≈ $0.05) |
 | `make check` | ruff + mypy --strict + 350+ offline tests (what CI runs) |
+
+## Costs
+Every conversation is recorded in a local **cost ledger** (`data/costs.db`): tokens, cache hits and estimated $ per run, grouped by a short **fingerprint** of the API key (never the key itself).
+```bash
+uv run stridedj costs        # terminal tables + an HTML dashboard in your browser (one section per API key)
+```
+- **With an optional OpenAI Admin key** (`OPENAI_ADMIN_KEY`, see [SETUP §1](docs/SETUP.md#1-openai-api-key)), the dashboard also shows **OpenAI's billed costs per API key** from the official Costs API: exact amounts, daily, named keys, per line item.
+- **Least privilege:** the Admin key is used only by this command, never by the bot.
+- **In Telegram:** `/costs` gives this month's StrideDJ spend from the ledger.
 
 ## Evals
 The agent is evaluated like a product, following Anthropic's [*Demystifying evals for AI agents*](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents).

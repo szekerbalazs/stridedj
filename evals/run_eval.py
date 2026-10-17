@@ -24,6 +24,7 @@ from evals.tasks import Task, load_tasks
 from stridedj.agent.service import PROMPTS_DIR
 from stridedj.app import build_demo_app
 from stridedj.config import load_settings
+from stridedj.costs.ledger import CostLedger, UsageSink, default_ledger_path, key_fingerprint
 from stridedj.domain import UserContext, UserId
 from stridedj.harness.context import Prompt
 from stridedj.llm.base import LLMClient
@@ -50,7 +51,12 @@ class TrialResult(BaseModel):
 
 
 async def run_trial(
-    task: Task, trial: int, llm_factory: LLMFactory, out_dir: Path, prompt: Prompt | None = None
+    task: Task,
+    trial: int,
+    llm_factory: LLMFactory,
+    out_dir: Path,
+    prompt: Prompt | None = None,
+    usage_sink: UsageSink | None = None,
 ) -> TrialResult:
     app = await build_demo_app(
         llm_factory(task),
@@ -58,6 +64,7 @@ async def run_trial(
         calendar=task.env.calendar,
         poisoned_calendar=task.env.poisoned_calendar,
         prompt=prompt,
+        usage_sink=usage_sink,
     )
     user = UserContext(user_id=UserId(f"eval-{task.id}-{trial}"), timezone=app.timezone)
     responses = [await app.agent.handle(user, turn) for turn in task.turns]
@@ -92,13 +99,19 @@ async def run_trial(
 
 
 async def run_all(
-    tasks: list[Task], k: int, llm_factory: LLMFactory, out_dir: Path, concurrency: int, prompt: Prompt | None = None
+    tasks: list[Task],
+    k: int,
+    llm_factory: LLMFactory,
+    out_dir: Path,
+    concurrency: int,
+    prompt: Prompt | None = None,
+    usage_sink: UsageSink | None = None,
 ) -> list[TrialResult]:
     semaphore = asyncio.Semaphore(concurrency)
 
     async def guarded(task: Task, trial: int) -> TrialResult:
         async with semaphore:
-            return await run_trial(task, trial, llm_factory, out_dir, prompt)
+            return await run_trial(task, trial, llm_factory, out_dir, prompt, usage_sink)
 
     return list(await asyncio.gather(*(guarded(t, i) for t in tasks for i in range(k))))
 
@@ -173,6 +186,7 @@ def main() -> None:
         tasks = [t for t in tasks if t.id in set(args.task)]
 
     factory: LLMFactory
+    sink: UsageSink | None = None  # real-model eval runs cost money: record them in the cost ledger
     if args.reference:
         factory, label = (lambda task: ScriptedLLM(reference_policy(task))), "reference"
     elif args.vulnerable:
@@ -182,11 +196,14 @@ def main() -> None:
         settings = settings.model_copy(update={"model": args.model}) if args.model else settings
         client = OpenAIResponsesClient.from_settings(settings)
         factory, label = (lambda task: client), settings.model
+        if settings.api_key is not None:
+            ledger = CostLedger(default_ledger_path(load_settings().app.data_dir))
+            sink = ledger.sink(key_fp=key_fingerprint(settings.api_key.get_secret_value()), source="eval")
 
     prompt = Prompt.load(PROMPTS_DIR / f"{args.prompt}.md") if args.prompt else None
     label = f"{label}_{args.prompt}" if args.prompt else label
     out_dir = RUNS_DIR / f"{datetime.now(UTC):%Y%m%dT%H%M%S}_{label}"
-    results = asyncio.run(run_all(tasks, args.k, factory, out_dir, args.concurrency, prompt))
+    results = asyncio.run(run_all(tasks, args.k, factory, out_dir, args.concurrency, prompt, sink))
     text = report(results, k=args.k, label=label)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "report.md").write_text(text)

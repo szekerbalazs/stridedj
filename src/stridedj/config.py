@@ -55,6 +55,8 @@ class OpenAISettings(_EnvSettings):
     model_config = SettingsConfigDict(env_prefix="OPENAI_")
 
     api_key: SecretStr | None = None
+    # Optional. Only `stridedj costs` uses it (exact billed costs per API key); never the bot process.
+    admin_key: SecretStr | None = None
     model: str = "gpt-6-luna"
     reasoning_effort: Literal["none", "low", "medium", "high"] | None = "low"
     max_output_tokens: int = Field(default=4000, gt=0)
