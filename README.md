@@ -57,12 +57,18 @@ Untrusted text (song titles, calendar invites) never enters the model's context,
 
 ## Quickstart (demo mode, about 5 minutes)
 Demo mode runs the *same agent* on synthetic runs, a fake calendar and a fake music library. You only need an OpenAI API key.
-```bash
-git clone https://github.com/szekerbalazs/stridedj.git && cd stridedj
-make setup                 # uv venv (Python 3.12) + dependencies + .env from the template
-#  → put your OPENAI_API_KEY into .env   (docs/SETUP.md §1)
-make demo                  # chat in the terminal: try "10k Z2 tonight"
-```
+
+1. Clone and install. `make setup` creates a Python 3.12 environment with uv, installs the dependencies and creates `.env` from the template:
+   ```bash
+   git clone https://github.com/szekerbalazs/stridedj.git && cd stridedj
+   make setup
+   ```
+2. Put your `OPENAI_API_KEY` into `.env` ([docs/SETUP.md §1](docs/SETUP.md#1-openai-api-key)).
+3. Chat in the terminal and try *"10k Z2 tonight"*:
+   ```bash
+   make demo
+   ```
+
 Requirements: macOS or Linux and [uv](https://docs.astral.sh/uv/). uv fetches Python 3.12 itself.
 
 ## Full setup (your real accounts)
@@ -79,10 +85,13 @@ Follow **[docs/SETUP.md](docs/SETUP.md)**: click-by-click, about 45 minutes, wit
 Then the one-time logins and a check:
 ```bash
 uv run stridedj auth garmin && uv run stridedj auth spotify && uv run stridedj auth google
-make doctor     # ✓/✗ per credential, never prints values
-make smoke      # read-only live check of every integration (counts only)
-make bot        # start the Telegram bot
+make doctor
+make smoke
+make bot
 ```
+- `make doctor`: ✓/✗ per credential, never prints values
+- `make smoke`: read-only live check of every integration (counts only)
+- `make bot`: start the Telegram bot
 
 ### `.env` reference
 All configuration and secrets live in `.env`, which is git- and docker-ignored. The template is [`.env.example`](.env.example).
@@ -120,8 +129,9 @@ All configuration and secrets live in `.env`, which is git- and docker-ignored. 
 ## Costs
 Every conversation is recorded in a local **cost ledger** (`data/costs.db`): tokens, cache hits and estimated $ per run, grouped by a short **fingerprint** of the API key (never the key itself).
 ```bash
-uv run stridedj costs        # terminal tables + an HTML dashboard in your browser (one section per API key)
+uv run stridedj costs
 ```
+- `uv run stridedj costs`: terminal tables + an HTML dashboard in your browser (one section per API key)
 - **With an optional OpenAI Admin key** (`OPENAI_ADMIN_KEY`, see [SETUP §1](docs/SETUP.md#1-openai-api-key)), the dashboard also shows **OpenAI's billed costs per API key** from the official Costs API: exact amounts, daily, named keys, per line item.
 - **Least privilege:** the Admin key is used only by this command, never by the bot.
 - **In Telegram:** `/costs` gives this month's StrideDJ spend from the ledger.
@@ -170,9 +180,12 @@ docs/              setup, architecture, harness, evals, prompting, injection, ho
 The bot uses long polling, so it needs **no inbound port**. It runs anywhere Docker runs: a laptop, a €5 VM, Fly.io.
 ```bash
 docker compose build
-docker compose run --rm -it bot auth garmin   # one-time login inside the container
-docker compose up -d                          # non-root, read-only filesystem, secrets from .env, data in a volume
+docker compose run --rm -it bot auth garmin
+docker compose up -d
 ```
+- `docker compose run --rm -it bot auth garmin`: one-time login inside the container
+- `docker compose up -d`: non-root, read-only filesystem, secrets from .env, data in a volume
+
 More, including hosting the *model* yourself (vLLM, GPU memory math), is in [docs/HOSTING.md](docs/HOSTING.md).
 
 ## Documentation

@@ -20,10 +20,11 @@
 
 ```bash
 docker compose build
-docker compose run --rm -it bot auth garmin     # one-time interactive login (MFA) inside the container
+docker compose run --rm -it bot auth garmin
 docker compose up -d
 docker compose logs -f bot
 ```
+- `docker compose run --rm -it bot auth garmin`: one-time interactive login (MFA) inside the container
 
 ### Where to run it
 | Option | Pros | Cons |

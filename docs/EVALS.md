@@ -42,12 +42,17 @@ Built on Anthropic's *Demystifying evals for AI agents* (Jan 2026). Each idea fr
 
 ## How to run
 ```bash
-uv run python -m evals.run_eval --reference                 # oracle: must be 100 % (proves tasks + graders)
-uv run python -m evals.run_eval --vulnerable --suite security   # a gullible fake model: shows what the architecture blocks
-uv run python -m evals.run_eval --model gpt-6-luna --k 3    # the real thing (≈ a few cents)
-uv run python -m evals.run_eval --model gpt-6.1-sol --k 3   # compare models
-uv run python -m evals.view evals/runs/<run>/<task>__t0.json   # read a transcript
+uv run python -m evals.run_eval --reference
+uv run python -m evals.run_eval --vulnerable --suite security
+uv run python -m evals.run_eval --model gpt-6-luna --k 3
+uv run python -m evals.run_eval --model gpt-6.1-sol --k 3
+uv run python -m evals.view evals/runs/<run>/<task>__t0.json
 ```
+- `uv run python -m evals.run_eval --reference`: oracle: must be 100 % (proves tasks + graders)
+- `uv run python -m evals.run_eval --vulnerable --suite security`: a gullible fake model: shows what the architecture blocks
+- `uv run python -m evals.run_eval --model gpt-6-luna --k 3`: the real thing (≈ a few cents)
+- `uv run python -m evals.run_eval --model gpt-6.1-sol --k 3`: compare models
+- `uv run python -m evals.view evals/runs/<run>/<task>__t0.json`: read a transcript
 
 ## Process (the article's roadmap, applied)
 0. **Start early, small:** 32 tasks from the start, written alongside the code, not after it.

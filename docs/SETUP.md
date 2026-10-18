@@ -25,8 +25,9 @@ After each step run `make doctor`: it checks every credential (live where possib
 Requirements: macOS or Linux, [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`). uv installs Python 3.12 by itself.
 ```bash
 git clone https://github.com/szekerbalazs/stridedj.git && cd stridedj
-make setup        # creates .venv with Python 3.12, installs dependencies, copies .env.example → .env
+make setup
 ```
+- `make setup`: creates .venv with Python 3.12, installs dependencies, copies .env.example → .env
 
 ## 1. OpenAI API key
 ChatGPT subscriptions do **not** include API usage; the API is billed separately with prepaid credit.
@@ -104,20 +105,34 @@ Notes:
 
 ## 6. One-time logins
 ```bash
-uv run stridedj auth garmin     # asks for the MFA code if you use one
-uv run stridedj auth spotify    # opens the browser → approve → refresh token written to .env
-uv run stridedj auth google     # opens the browser → "Google hasn't verified this app" → Advanced → Continue,
-                                #   tick both permissions → refresh token written to .env
-make doctor                     # everything ✓
-make smoke                      # read-only live check: prints counts only
+uv run stridedj auth garmin
+uv run stridedj auth spotify
+uv run stridedj auth google
+make doctor
+make smoke
 ```
+- `auth garmin`: asks for the MFA code if you use one.
+- `auth spotify`: opens the browser. Approve, and the refresh token is written to `.env`.
+- `auth google`: opens the browser. At *"Google hasn't verified this app"*, click **Advanced → Continue** and tick **both** permissions; the refresh token is written to `.env`.
+- `make doctor`: everything should be ✓.
+- `make smoke`: a read-only live check that prints counts only.
 
 ## Run it
 ```bash
-make demo                        # terminal chat on synthetic data (only OpenAI needed)
-uv run stridedj chat --data live # terminal chat on your real accounts
-make bot                         # the Telegram bot (keep the terminal open)
+make demo
 ```
+Terminal chat on synthetic data (only the OpenAI key needed).
+
+```bash
+uv run stridedj chat --data live
+```
+Terminal chat on your real accounts.
+
+```bash
+make bot
+```
+The Telegram bot. Keep the terminal open; **only one copy can run per bot token**, so stop the old one first (Ctrl+C).
+
 For an always-on bot, see [HOSTING.md](HOSTING.md) (`docker compose up -d`).
 
 ## Troubleshooting
@@ -129,3 +144,5 @@ For an always-on bot, see [HOSTING.md](HOSTING.md) (`docker compose up -d`).
 | Spotify: 403 on a playlist | you don't own it: copy it into your own playlist and use the copy's ID |
 | Spotify: `INVALID_CLIENT: Invalid redirect URI` | the dashboard and `.env` must both say exactly `http://127.0.0.1:8888/callback` |
 | The bot doesn't answer | is `make bot` running? Is your numeric id in `TELEGRAM_ALLOWED_USER_IDS`? Did you press Start? |
+| `Conflict: terminated by other getUpdates request` | two copies of the bot are running (e.g. one in another terminal). Stop the old one: Ctrl+C there, or `pkill -f "stridedj bot"` |
+| `make: No rule to make target '#'` | a pasted line had a `# comment`; zsh passes it on as arguments. Run the command without the comment |

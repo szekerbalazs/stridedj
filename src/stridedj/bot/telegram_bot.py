@@ -17,6 +17,7 @@ from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ChatType, ParseMode
+from telegram.error import Conflict, InvalidToken, NetworkError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from stridedj.app import App
@@ -53,6 +54,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("costs", self._on_costs))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text))
         self._app.add_handler(CallbackQueryHandler(self._on_button))
+        self._app.add_error_handler(self._on_error)
 
     async def _post_init(self, _: Application[Any, Any, Any, Any, Any, Any]) -> None:
         self._stride = await self._app_factory()
@@ -67,6 +69,27 @@ class TelegramBot:
     def run(self) -> None:
         """Blocking: poll Telegram until interrupted."""
         self._app.run_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY], drop_pending_updates=True)
+
+    async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """One readable line per problem instead of a traceback loop; stop when polling can't work at all."""
+        error = context.error
+        if isinstance(error, Conflict):
+            log.error(
+                "Another copy of this bot is already running: Telegram delivers a bot's messages to one program only. "
+                "Stop the other copy (Ctrl+C in its terminal, or `pkill -f 'stridedj bot'`), then start this one again."
+            )
+            context.application.stop_running()
+            return
+        if isinstance(error, InvalidToken):
+            log.error("Telegram rejected the bot token: check TELEGRAM_BOT_TOKEN in .env (docs/SETUP.md §2).")
+            context.application.stop_running()
+            return
+        if isinstance(error, NetworkError):
+            log.warning("Telegram is unreachable right now (%s); retrying automatically.", type(error).__name__)
+            return
+        log.error("Unexpected error while handling a message", exc_info=error)
+        if isinstance(update, Update) and update.effective_chat is not None:
+            await update.effective_chat.send_message("Something went wrong on my side. Please try again in a minute.")
 
     def _user(self, telegram_user_id: int) -> UserContext:
         return UserContext(user_id=UserId(f"tg:{telegram_user_id}"), timezone=self._s.timezone)
