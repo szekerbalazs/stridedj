@@ -17,5 +17,5 @@ jobs:
       - run: uv run mypy
       - run: uv run pytest --cov
       # the eval suites with the oracle and the gullible model: proves tasks/graders and the security architecture
-      - run: uv run python -m evals.run_eval --reference --k 1
+      - run: uv run python -m evals.run_eval --reference --fail-under 1.0
       - run: uv run python -m evals.run_eval --vulnerable --suite security
