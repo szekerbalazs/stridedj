@@ -99,6 +99,26 @@ def test_fitness_trend_option_adds_an_age_feature(demo_runs: list[ClassifiedRun]
     assert model.coefficients()["age_days"] > 0  # older runs were slower: the athlete got fitter
 
 
+def test_a_few_identical_runs_still_get_the_personal_spread() -> None:
+    """3 similar runs can give p80 = p50 (the 80 % point falls on the same run). The p80 is at least the
+    personal model's typical spread above the p50."""
+    noise = [0.94, 1.05, 0.99, 1.08, 0.97, 1.03, 0.92, 1.06, 1.01, 0.96, 1.09, 0.98]
+    history = [
+        run(f"h{i}", days_ago=40 + 9 * i, km=km, minutes=6.0 * km * factor)
+        for i, (km, factor) in enumerate(zip([5, 7, 9, 12, 15, 6, 8, 11, 14, 5, 9, 13], noise, strict=True))
+    ]
+    recent = [run(f"r{i}", days_ago=5 + 7 * i, km=10.0, minutes=60.0) for i in range(3)]
+    predictor = DurationPredictor(history + recent, now=NOW)
+    estimate = predictor.estimate(RunType.Z2, 10.0)
+    assert estimate.method is EstimateMethod.RECENT_SIMILAR
+    assert estimate.p50_min == pytest.approx(60.0, abs=0.1)
+    assert predictor.model is not None
+    spread = math.exp(predictor.model.log_residual_quantile)
+    assert spread > 1.01
+    assert estimate.p80_min == pytest.approx(60.0 * spread, abs=0.1)
+    assert "usual run-to-run spread" in estimate.note
+
+
 def test_riegel_from_most_recent_run_on_a_tiny_history() -> None:
     runs = [run("old", days_ago=20, km=8.0, minutes=48.0), run("new", days_ago=5, km=6.0, minutes=35.0)]
     estimate = estimate_duration(runs, RunType.Z2, 12.0, now=NOW)

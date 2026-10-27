@@ -421,11 +421,20 @@ class DurationPredictor:
         ]
         p50 = weighted_quantile(scaled, weights, 0.5)
         p80 = weighted_quantile(scaled, weights, self._config.quantile)
+        spread_text = ""
+        if self._model is not None:
+            # A few runs cannot show how much times vary (3 runs can give p80 = p50): the p80 is at least
+            # the personal model's typical spread above the p50 (its 80% log-residual quantile, fit on many runs).
+            floor = p50 * math.exp(self._model.log_residual_quantile)
+            if floor > p80:
+                p80 = floor
+                spread_text = f" 80% includes your usual run-to-run spread (+{floor / p50 - 1:.0%})."
         lo, hi = self._similar_range(distance_km)
         exponent_text = f"personal exponent {b:.2f}" if self._model is not None else f"textbook exponent {b:.2f}"
         note = (
             f"Based on {len(similar)} {run_type.value} runs of {_fmt_km(lo)}–{_fmt_km(hi)} km in the last "
             f"{self._config.recent_window_days} days, scaled to {_fmt_km(distance_km)} km ({exponent_text})."
+            + spread_text
         )
         return self._build(run_type, distance_km, EstimateMethod.RECENT_SIMILAR, len(similar), p50, p80, note)
 
