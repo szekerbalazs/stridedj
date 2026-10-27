@@ -24,6 +24,7 @@ from stridedj.domain import (
     CadenceTarget,
     DurationEstimate,
     Genre,
+    IntervalSession,
     Mood,
     MusicChoice,
     PlaylistDraft,
@@ -191,6 +192,10 @@ class RunInsights(Protocol):
     def cadence_target(self, run_type: RunType, *, now: datetime) -> CadenceTarget: ...
 
     def race_predictions(self, *, now: datetime) -> Sequence[RacePrediction]: ...
+
+    def interval_options(self, *, now: datetime, max_minutes: int | None = None) -> Sequence[IntervalSession]:
+        """2-3 interval sessions (distance reps, standing rests) at the runner's current target paces."""
+        ...
 
 
 class SlotFinder(Protocol):

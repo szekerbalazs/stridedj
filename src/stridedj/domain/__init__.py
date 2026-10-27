@@ -23,9 +23,11 @@ from stridedj.domain.planning import (
     CadenceTarget,
     DurationEstimate,
     EstimateMethod,
+    IntervalSession,
     IntervalSessionDistance,
     RacePrediction,
     RunningProfile,
+    format_pace,
 )
 from stridedj.domain.runs import Activity, ClassifiedRun, HeartRateZones, Lap, LapIntensity, RunSeries, RunType
 
@@ -45,6 +47,7 @@ __all__ = [
     "Frozen",
     "Genre",
     "HeartRateZones",
+    "IntervalSession",
     "IntervalSessionDistance",
     "Lap",
     "LapIntensity",
@@ -71,4 +74,5 @@ __all__ = [
     "UserContext",
     "UserId",
     "Weekday",
+    "format_pace",
 ]

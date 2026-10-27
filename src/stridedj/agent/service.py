@@ -12,12 +12,21 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from stridedj.agent.placeholders import render_offer_message, render_proposal_message
 from stridedj.agent.session import AgentSession
 from stridedj.agent.tools import MAX_DAYS_AHEAD, AgentDeps, build_tools
 from stridedj.costs.ledger import UsageSink
-from stridedj.domain import AgentReply, ExecutionResult, PlanId, ReplyKind, RunPlan, UserContext, UserId
+from stridedj.domain import (
+    AgentReply,
+    ExecutionResult,
+    IntervalSession,
+    ReplyKind,
+    RunPlan,
+    UserContext,
+    UserId,
+)
 from stridedj.harness.approvals import ApprovalStore
 from stridedj.harness.context import Prompt, compose_instructions, history_items
 from stridedj.harness.executor import PlanExecutor
@@ -28,16 +37,18 @@ from stridedj.llm.base import LLMClient
 log = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
-DEFAULT_PROMPT = PROMPTS_DIR / "system_v3.md"  # v1, v2 kept for comparison (see docs/PROMPTING.md)
+DEFAULT_PROMPT = PROMPTS_DIR / "system_v4.md"  # v1-v3 kept for comparison (see docs/PROMPTING.md)
 
 
 class AgentResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     reply: AgentReply
+    text: str = Field(description="what the runner sees: the reply message with its placeholders filled in by code")
     plan: RunPlan | None
     approval_token: str | None
     outcome: RunOutcome
+    session_options: tuple[IntervalSession, ...] = ()  # interval sessions offered in this turn: shown as buttons
 
 
 class StrideAgent:
@@ -93,14 +104,13 @@ class StrideAgent:
         now = self._deps.clock.now()
 
         def reply_check(reply: AgentReply) -> str | None:
-            # Verify the model's claim against state: a "proposal" must reference a plan created in THIS run.
-            if reply.kind is ReplyKind.PROPOSAL and reply.proposal_id not in session.run_proposals:
+            # Verify the model's claim against state: a "proposal" needs a plan created by propose_plan in THIS run.
+            # (The harness attaches that plan itself: the model never copies an id.)
+            if reply.kind is ReplyKind.PROPOSAL and not session.run_proposals:
                 return (
-                    "Your answer has kind 'proposal' but proposal_id does not match a plan created by propose_plan "
-                    "in this conversation turn. Call propose_plan, or answer with another kind."
+                    "Your answer has kind 'proposal' but propose_plan did not create a plan in this conversation "
+                    "turn. Call propose_plan, or answer with another kind."
                 )
-            if reply.kind is not ReplyKind.PROPOSAL and reply.proposal_id is not None:
-                return "proposal_id must be null unless kind is 'proposal'."
             return None
 
         outcome = await run_agent(
@@ -115,21 +125,34 @@ class StrideAgent:
             reply_check=reply_check,
             cache_key=f"stridedj-{user.user_id}",
         )
-        if self._traces_dir is not None:
-            outcome.transcript.save(self._traces_dir)
         if self._usage_sink is not None:
             try:
                 self._usage_sink.record(outcome.transcript)
             except Exception:  # accounting must never break a conversation
                 log.exception("could not record usage")
-        session.history.append((text, outcome.reply.message))
-
         plan: RunPlan | None = None
         token: str | None = None
-        if outcome.reply.kind is ReplyKind.PROPOSAL and outcome.reply.proposal_id is not None:
-            plan = session.state.plans[PlanId(outcome.reply.proposal_id)]
+        options: tuple[IntervalSession, ...] = ()
+        shown, replaced_because = outcome.reply.message, None
+        if outcome.reply.kind is ReplyKind.PROPOSAL and session.run_proposals:
+            plan = session.state.plans[session.run_proposals[-1]]  # the latest plan of this turn
             token = self._approvals.issue(plan)
-        return AgentResponse(reply=outcome.reply, plan=plan, approval_token=token, outcome=outcome)
+            runner_said = " ".join([said for said, _ in session.history] + [text])
+            shown, replaced_because = render_proposal_message(
+                outcome.reply.message, plan, user.tz, runner_said=runner_said
+            )
+        elif session.run_options:
+            options = tuple(session.state.sessions[i] for i in session.run_options)
+            shown, replaced_because = render_offer_message(outcome.reply.message)
+        if replaced_because is not None:
+            log.info("reply message replaced by the standard one: %s", replaced_because)
+            outcome.transcript.add("harness", event="message_replaced", reason=replaced_because)
+        if self._traces_dir is not None:
+            outcome.transcript.save(self._traces_dir)
+        session.history.append((text, shown))
+        return AgentResponse(
+            reply=outcome.reply, text=shown, plan=plan, approval_token=token, outcome=outcome, session_options=options
+        )
 
     async def approve(self, token: str, *, user_id: UserId) -> ExecutionResult:
         """Raises `ApprovalError` if the token is invalid for this user; otherwise executes the bound plan."""

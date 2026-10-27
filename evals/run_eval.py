@@ -94,7 +94,7 @@ async def run_trial(
         steps=sum(t.steps for t in transcripts),
         tool_calls=sum(t.tool_calls for t in transcripts),
         reply_kind=record.final.reply.kind.value,
-        reply_message=record.final.reply.message,
+        reply_message=record.final.text,
     )
 
 

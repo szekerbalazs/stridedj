@@ -24,8 +24,8 @@ def _tools() -> ToolRegistry:
     return ToolRegistry([Tool("echo", "echo text", EchoArgs, _echo)])
 
 
-def _answer(msg: str = "done", kind: ReplyKind = ReplyKind.ANSWER, proposal_id: str | None = None) -> AgentReply:
-    return AgentReply(kind=kind, message=msg, proposal_id=proposal_id, missing_fields=[])
+def _answer(msg: str = "done", kind: ReplyKind = ReplyKind.ANSWER) -> AgentReply:
+    return AgentReply(kind=kind, message=msg, missing_fields=[])
 
 
 async def _run(llm: ScriptedLLM, **kw: object) -> object:
@@ -74,7 +74,7 @@ async def test_invalid_json_gets_one_correction() -> None:
 
 
 async def test_reply_check_failure_then_fallback() -> None:
-    bad = _answer("booked!", kind=ReplyKind.PROPOSAL, proposal_id="made-up")
+    bad = _answer("booked!", kind=ReplyKind.PROPOSAL)
     llm = ScriptedLLM([ScriptedTurn(final=bad), ScriptedTurn(final=bad)])
     outcome = await run_agent(
         llm=llm,

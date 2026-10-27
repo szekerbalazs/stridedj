@@ -65,7 +65,7 @@ def test_fields_named_like_keywords_survive() -> None:
 
 def test_agent_reply_schema_is_strict() -> None:
     schema = strict_json_schema(AgentReply)
-    assert set(schema["required"]) == {"kind", "message", "proposal_id", "missing_fields"}
+    assert set(schema["required"]) == {"kind", "message", "missing_fields"}
     assert schema["additionalProperties"] is False
 
 

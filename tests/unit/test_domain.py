@@ -89,10 +89,10 @@ def test_activity_pace_uses_moving_time() -> None:
 
 
 def test_agent_reply_length_limit() -> None:
-    ok = AgentReply(kind=ReplyKind.ANSWER, message="fine", proposal_id=None, missing_fields=[])
+    ok = AgentReply(kind=ReplyKind.ANSWER, message="fine", missing_fields=[])
     assert ok.kind is ReplyKind.ANSWER
     with pytest.raises(ValidationError, match="longer than"):
-        AgentReply(kind=ReplyKind.ANSWER, message="x" * 801, proposal_id=None, missing_fields=[])
+        AgentReply(kind=ReplyKind.ANSWER, message="x" * 801, missing_fields=[])
 
 
 def test_plan_hash_changes_with_content() -> None:

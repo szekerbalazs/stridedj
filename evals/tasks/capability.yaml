@@ -87,18 +87,18 @@
   turns: ["10k Z2 on Monday at 9:00"]
   expect: {kind: [answer, clarification], date: monday, start_time: "09:00", must_call: [find_free_slots]}
 
-# ── interval sessions: ask once for warm-up/cool-down, then add it up (recoveries default to half a rep) ──
+# ── interval sessions: ask once for warm-up/cool-down, then add it up (recoveries are standing rests) ──
 - id: c15-intervals-asked-then-total
   suite: capability
-  description: 'A three-message dialogue: after warm-up and cool-down are given, the total (2 + 3.2 + 3 × 0.4 + 1) must be inferred, not asked.'
+  description: 'A three-message dialogue: after warm-up and cool-down are given, the total (2 + 3.2 + 1, standing rests) must be inferred, not asked.'
   turns: ["Interval run tonight", "4 x 800m + warm-up + cooldown", "2 km warm-up and 1 km cool-down"]
-  expect: {kind: proposal, run_type: intervals, distance_km: 7.4, date: today, day_part: evening}
+  expect: {kind: proposal, run_type: intervals, distance_km: 6.2, date: today, day_part: evening}
 
 - id: c16-intervals-all-in-one
   suite: capability
-  description: Reps, warm-up and cool-down in one message → no question; total 2 + 4 + 3 × 0.5 + 1.5 = 9.0 km.
+  description: Reps, warm-up and cool-down in one message → no question; total 2 + 4 + 1.5 = 7.5 km (standing rests).
   turns: ["4x1k with 2 km warm-up and 1.5 km cool-down tomorrow evening"]
-  expect: {kind: proposal, run_type: intervals, distance_km: 9.0, date: tomorrow, day_part: evening}
+  expect: {kind: proposal, run_type: intervals, distance_km: 7.5, date: tomorrow, day_part: evening}
 
 - id: c17-intervals-given-recovery
   suite: capability
@@ -136,3 +136,16 @@
   description: A German genre word ("Deutschrap") maps to the closest genre value.
   turns: ["Morgen früh 8 km locker, bitte mit Deutschrap"]
   expect: {kind: proposal, run_type: z2, distance_km: 8, date: tomorrow, day_part: morning, genre: hip hop}
+
+# ── interval sessions offered as buttons ──
+- id: c23-intervals-offer-sessions
+  suite: capability
+  description: An interval run without named reps → offer sessions (buttons), no plan, no numbers in the message.
+  turns: ["Intervals tomorrow evening"]
+  expect: {kind: clarification, must_call: [suggest_interval_sessions]}
+
+- id: c24-intervals-picked-session
+  suite: capability
+  description: The tapped button arrives as a code-made message; the plan must carry that session and its total.
+  turns: ["Intervals tomorrow evening", "I choose interval session i2: 6 × 800 m @ 4:10, 90 s rest, 8.3 km in total."]
+  expect: {kind: proposal, run_type: intervals, distance_km: 8.3, date: tomorrow, day_part: evening, session_id: i2}

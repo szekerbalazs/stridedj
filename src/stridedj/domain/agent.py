@@ -12,7 +12,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 from stridedj.domain.base import DraftId, Frozen, PlanId, UserId
 from stridedj.domain.calendar import TimeSlot
 from stridedj.domain.music import PlaylistDraft
-from stridedj.domain.planning import CadenceTarget, DurationEstimate
+from stridedj.domain.planning import CadenceTarget, DurationEstimate, IntervalSession
 from stridedj.domain.runs import RunType
 
 MAX_REPLY_CHARS = 800
@@ -64,9 +64,9 @@ class AgentReply(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: ReplyKind
-    message: str = Field(description="Short reply to the runner, plain text, no markdown, no URLs.")
-    proposal_id: str | None = Field(
-        description="The plan_id returned by propose_plan when kind is 'proposal', else null."
+    message: str = Field(
+        description="Short reply to the runner, plain text, no markdown, no URLs. For a proposal: the plan's facts "
+        "only as placeholders the app fills in ({start}, {expected}, {session}, {music}, ...), never as numbers."
     )
     missing_fields: list[MissingField] = Field(description="What to ask for when kind is 'clarification', else [].")
 
@@ -90,6 +90,7 @@ class RunPlan(Frozen):
     slot: TimeSlot
     cadence: CadenceTarget
     playlist: PlaylistDraft | None
+    session: IntervalSession | None = Field(default=None, description="the interval session, if one was chosen")
     created_at: AwareDatetime
 
     def content_hash(self) -> str:

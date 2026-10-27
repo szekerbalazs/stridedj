@@ -11,7 +11,7 @@ import html
 from collections.abc import Sequence
 from zoneinfo import ZoneInfo
 
-from stridedj.domain import ExecutionResult, RunPlan, Track
+from stridedj.domain import ExecutionResult, IntervalSession, RunPlan, Track
 from stridedj.harness.executor import RUN_TYPE_LABEL
 
 MAX_TRACKS_SHOWN = 8
@@ -38,6 +38,8 @@ def render_proposal(plan: RunPlan, tracks: Sequence[Track], tz: ZoneInfo, *, ric
         f"👟 cadence target {plan.cadence.spm:.0f} spm"
         + (f" ({plan.cadence.n_runs} recent runs)" if plan.cadence.n_runs else ""),
     ]
+    if plan.session is not None:
+        lines.insert(1, f"🔁 {plan.session.outline}")
     p = plan.playlist
     if p is None:
         lines.append("🎵 no playlist")
@@ -51,6 +53,15 @@ def render_proposal(plan: RunPlan, tracks: Sequence[Track], tz: ZoneInfo, *, ric
         if len(tracks) > MAX_TRACKS_SHOWN:
             lines.append(f"   … and {len(tracks) - MAX_TRACKS_SHOWN} more")
     return "\n".join(lines)
+
+
+def session_button_label(session: IntervalSession) -> str:
+    """ "6 × 800 m @ 4:10 · 8.3 km · ~52′" (a pyramid: "Pyramid 400-1200 m · 7.1 km · ~46′")."""
+    if len(set(session.reps_m)) == 1:
+        head = session.main_set.split(",")[0]
+    else:
+        head = f"Pyramid {min(session.reps_m)}-{max(session.reps_m)} m"
+    return f"{head} · {session.total_km:g} km · ~{session.duration.p50_min:.0f}′"
 
 
 def render_execution(result: ExecutionResult, *, rich: bool = True) -> str:

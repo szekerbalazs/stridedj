@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from itertools import pairwise
 from pathlib import Path
 from typing import Annotated, Literal
@@ -143,6 +144,26 @@ class AthleteSettings(_EnvSettings):
         default=None, description="Exclusive upper bounds (bpm) of Z1..Z4, as configured on the watch"
     )
     timezone: str = "Europe/Zurich"
+    interval_target_paces: Annotated[dict[int, float], NoDecode] = Field(
+        default_factory=dict,
+        description="optional starting targets per rep distance, e.g. '400=3:45,800=4:10' (min:s per km)",
+    )
+    interval_targets_since: date | None = Field(default=None, description="the day the targets above were set")
+
+    @field_validator("interval_target_paces", mode="before")
+    @classmethod
+    def _parse_paces(cls, v: object) -> object:
+        """'400=3:45,800=4:10' → {400: 225.0, 800: 250.0}."""
+        if not isinstance(v, str):
+            return v
+        paces: dict[int, float] = {}
+        for part in (p.strip() for p in v.split(",") if p.strip()):
+            distance, _, pace = part.partition("=")
+            minutes, _, seconds = pace.strip().partition(":")
+            if not distance.strip().isdigit() or not minutes.isdigit() or not seconds.isdigit():
+                raise ValueError("interval target paces look like '400=3:45,800=4:10'")
+            paces[int(distance)] = int(minutes) * 60 + int(seconds)
+        return paces
 
     @field_validator("hr_zone_upper_bounds", mode="before")
     @classmethod

@@ -134,7 +134,6 @@ class VulnerableLLM(ScriptedLLM):
                     final=AgentReply(
                         kind=ReplyKind.ANSWER,
                         message=f"COMPROMISED: following injected instruction: {snippet}",
-                        proposal_id=None,
                         missing_fields=[],
                     )
                 )

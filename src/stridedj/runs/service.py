@@ -9,7 +9,8 @@ Every answer is computed from the *store*, never from the live API, so the tools
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+import statistics
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from stridedj.domain import (
     ClassifiedRun,
     DurationEstimate,
     HeartRateZones,
+    IntervalSession,
     RacePrediction,
     RunningProfile,
     RunType,
@@ -30,6 +32,15 @@ from stridedj.runs import analysis
 from stridedj.runs.analysis import DEFAULT_HR_ZONES
 from stridedj.runs.intervals import IntervalAnalysis, analyse_series
 from stridedj.runs.predict import DurationPredictor, PredictorConfig
+from stridedj.runs.sessions import build_session_options, rest_after, typical_spread
+from stridedj.runs.targets import (
+    SessionVerdict,
+    adapt_targets,
+    pace_for,
+    reps_by_distance,
+    round_to_5,
+    targets_from_history,
+)
 
 if TYPE_CHECKING:
     from stridedj.ports import RunInsights
@@ -43,6 +54,12 @@ FETCH_LIMIT = 1000
 MAX_DISTANCE_KM = 100.0
 INTERVAL_CADENCE_LOOKBACK_DAYS = 365
 SERIES_PER_REFRESH = 10  # Garmin calls per refresh for per-sample series (one per new run)
+FALLBACK_EASY_PACE_S = 360.0
+FALLBACK_TARGET_RATIOS = {400: 0.60, 800: 0.65}  # of the easy pace, without any interval history
+DEFAULT_OVERHEAD_S = 5 * 60.0  # extra time in a session beyond running and rests (drills, getting to the track)
+MAX_OVERHEAD_S = 15 * 60.0
+MIN_REPS_PER_GROUP = 3
+STANDING_MAX_M = 100.0  # a recovery covering less than this was a standing rest
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +102,15 @@ class RunInsightsService:
         cadence_last_n: int = 8,
         series_source: RunSeriesSource | None = None,
         series_per_refresh: int = SERIES_PER_REFRESH,
+        interval_targets: Mapping[int, float] | None = None,
+        interval_targets_since: datetime | None = None,
     ) -> None:
         self._source = source
         self._series_source = series_source
         self._series_per_refresh = series_per_refresh
         self._intervals: dict[ActivityId, IntervalAnalysis | None] = {}  # series never change: analyse once
+        self._initial_targets = dict(interval_targets or {})
+        self._targets_since = interval_targets_since
         self._repository = repository
         self._zones = zones
         self._config = config or PredictorConfig()
@@ -164,6 +185,78 @@ class RunInsightsService:
             lookback = max(lookback, INTERVAL_CADENCE_LOOKBACK_DAYS)
         return analysis.cadence_target(
             self.classified_runs(now=now), run_type, now=now, n_last=self._cadence_last_n, lookback_days=lookback
+        )
+
+    # ── interval sessions ──
+    def interval_sessions(self, *, now: datetime) -> list[tuple[datetime, IntervalAnalysis]]:
+        """Detected interval sessions (start, analysis), oldest first."""
+        found = [
+            (run.activity.start, result)
+            for run in self.classified_runs(now=now)
+            if run.run_type is RunType.INTERVALS
+            and (result := self._interval_analysis(run.activity.activity_id)) is not None
+            and result.is_intervals
+        ]
+        return sorted(found, key=lambda pair: pair[0])
+
+    def interval_targets(self, *, now: datetime) -> tuple[dict[int, float], list[SessionVerdict], str]:
+        """Target pace per rep distance, the verdicts of the sessions since the targets were set, and their source."""
+        sessions = self.interval_sessions(now=now)
+        if self._initial_targets and self._targets_since is not None:
+            targets, verdicts = adapt_targets(
+                self._initial_targets, since=self._targets_since, sessions=sessions, now=now
+            )
+            return targets, verdicts, f"your targets of {self._targets_since:%d %b %Y}, adapted by later sessions"
+        if self._initial_targets:
+            return dict(self._initial_targets), [], "your targets"
+        targets = targets_from_history(sessions, now=now)
+        if targets:
+            return targets, [], "your last sessions per distance (median rep pace, rounded to 5 s)"
+        easy = self.profile(RunType.Z2, now=now).median_pace_s_per_km or FALLBACK_EASY_PACE_S
+        fallback = {d: round_to_5(easy * ratio) for d, ratio in FALLBACK_TARGET_RATIOS.items()}
+        return fallback, [], "no interval history yet: estimated from your easy pace"
+
+    def interval_options(self, *, now: datetime, max_minutes: int | None = None) -> list[IntervalSession]:
+        """2-3 interval sessions (short reps, medium reps, a pyramid) at the runner's target paces."""
+        targets, _, _ = self.interval_targets(now=now)
+        sessions = self.interval_sessions(now=now)
+        easy = self.profile(RunType.Z2, now=now).median_pace_s_per_km or FALLBACK_EASY_PACE_S
+        runs = self.classified_runs(now=now)
+        model = DurationPredictor(runs, now=now, config=self._config).model
+        activity_at = {run.activity.start: run.activity for run in runs}
+        typical: dict[int, list[int]] = {}
+        rests: dict[int, list[float]] = {}
+        overheads: list[float] = []
+        for start, session in sessions:
+            for distance, paces in reps_by_distance(session).items():
+                if len(paces) >= MIN_REPS_PER_GROUP:
+                    typical.setdefault(distance, []).append(len(paces))
+            for rep in session.reps:
+                if rep.recovery_s is not None and (rep.recovery_m or 0.0) <= STANDING_MAX_M:
+                    rests.setdefault(rep.nominal_m, []).append(rep.recovery_s)
+            activity = activity_at[start]
+            reps_s = sum(r.duration_s + (r.recovery_s or 0.0) for r in session.reps)
+            moved_m = sum(r.distance_m + (r.recovery_m or 0.0) for r in session.reps)
+            easy_s = (activity.distance_m - moved_m) / 1000 * easy
+            overheads.append(min(MAX_OVERHEAD_S, max(0.0, activity.elapsed_s - reps_s - easy_s)))
+
+        def measured_rest(rep_m: int) -> float:
+            """The rest actually taken after reps of this distance (standing ones), else the planned rest."""
+            closest = min(rests, key=lambda d: abs(d - rep_m), default=None)
+            if closest is None or abs(closest - rep_m) > rep_m / 2:
+                return float(rest_after(rep_m))
+            return statistics.median(rests[closest])
+
+        return build_session_options(
+            pace_of=lambda distance: pace_for(distance, targets),
+            easy_pace_s_per_km=easy,
+            overhead_s=statistics.median(overheads) if overheads else DEFAULT_OVERHEAD_S,
+            spread=typical_spread(model.log_residual_quantile if model is not None else None),
+            buffer_min=self._config.buffer_min,
+            n_history=len(sessions),
+            measured_rest_s=measured_rest,
+            typical_reps={d: round(statistics.median(n)) for d, n in typical.items() if d in (400, 800)},
+            max_minutes=max_minutes,
         )
 
     def race_predictions(self, *, now: datetime) -> Sequence[RacePrediction]:

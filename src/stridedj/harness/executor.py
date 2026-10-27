@@ -41,6 +41,8 @@ def event_description(plan: RunPlan, playlist_url: str | None) -> str:
         f"Expected running time: ~{plan.duration.p50_min:.0f} min (80% within {plan.duration.p80_min:.0f} min).",
         f"Cadence target: {plan.cadence.spm:.0f} steps/min.",
     ]
+    if plan.session is not None:
+        lines.insert(1, f"Session: {plan.session.outline}.")
     if playlist_url:
         lines.append(f"Playlist: {playlist_url}")
     return "\n".join(lines)

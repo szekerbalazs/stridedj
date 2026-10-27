@@ -71,7 +71,7 @@ FALLBACKS: dict[str, str] = {
 
 
 def _fallback(kind: ReplyKind, key: str) -> AgentReply:
-    return AgentReply(kind=kind, message=FALLBACKS[key], proposal_id=None, missing_fields=[])
+    return AgentReply(kind=kind, message=FALLBACKS[key], missing_fields=[])
 
 
 async def run_agent(
@@ -139,7 +139,7 @@ async def run_agent(
         if turn.incomplete_reason is not None:
             return finish(_fallback(ReplyKind.ERROR, "budget"), "incomplete")
         if turn.refusal is not None:
-            reply = AgentReply(kind=ReplyKind.REFUSAL, message=turn.refusal[:800], proposal_id=None, missing_fields=[])
+            reply = AgentReply(kind=ReplyKind.REFUSAL, message=turn.refusal[:800], missing_fields=[])
             return finish(reply, "refusal")
 
         if turn.tool_calls:

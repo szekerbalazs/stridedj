@@ -66,10 +66,10 @@ async def test_plan_numbers_come_from_state_not_the_model() -> None:
     assert plan.playlist.total_min >= plan.duration.p80_min
 
 
-async def test_hallucinated_proposal_id_is_caught() -> None:
+async def test_a_proposal_without_a_plan_is_caught() -> None:
     from stridedj.domain import AgentReply
 
-    fake = AgentReply(kind=ReplyKind.PROPOSAL, message="Booked!", proposal_id="invented", missing_fields=[])
+    fake = AgentReply(kind=ReplyKind.PROPOSAL, message="Booked!", missing_fields=[])  # propose_plan never ran
     app = await build_demo_app(ScriptedLLM([ScriptedTurn(final=fake), ScriptedTurn(final=fake)]), now=NOW)
     response = await app.agent.handle(USER, "10k Z2 tonight")
     assert response.reply.kind is ReplyKind.ERROR
@@ -132,9 +132,7 @@ async def test_a_named_busy_start_gets_the_nearest_free_starts_and_no_proposal()
 
 
 async def test_the_context_has_a_date_table_so_the_model_never_computes_dates() -> None:
-    llm = ScriptedLLM(
-        [ScriptedTurn(final=AgentReply(kind=ReplyKind.ANSWER, message="ok", proposal_id=None, missing_fields=[]))]
-    )
+    llm = ScriptedLLM([ScriptedTurn(final=AgentReply(kind=ReplyKind.ANSWER, message="ok", missing_fields=[]))])
     app = await build_demo_app(llm, now=NOW)
     await app.agent.handle(USER, "hi")
     instructions = str(llm.calls[0]["instructions"])
@@ -153,10 +151,34 @@ async def test_a_weekday_that_does_not_match_the_date_is_a_correctable_tool_erro
                 "start_time": None,
             }
             return ScriptedTurn(tool_calls=[("find_free_slots", args)])
-        return ScriptedTurn(final=AgentReply(kind=ReplyKind.ANSWER, message="ok", proposal_id=None, missing_fields=[]))
+        return ScriptedTurn(final=AgentReply(kind=ReplyKind.ANSWER, message="ok", missing_fields=[]))
 
     app = await build_demo_app(ScriptedLLM(policy), now=NOW)
     response = await app.agent.handle(USER, "10k Z2 on Monday")
     (event,) = response.outcome.transcript.tool_events()
     assert event.data["is_error"] is True
     assert "2026-10-20 is a tuesday, not a monday; the next monday is 2026-10-19" in event.data["output"]
+
+
+async def test_interval_sessions_are_offered_as_buttons_then_planned_with_the_picked_one() -> None:
+    task = next(t for t in load_tasks() if t.id == "c24-intervals-picked-session")
+    app = await build_demo_app(ScriptedLLM(reference_policy(task)), now=NOW)
+
+    offer = await app.agent.handle(USER, task.turns[0])
+    assert offer.reply.kind is ReplyKind.CLARIFICATION and offer.plan is None
+    assert [o.session_id for o in offer.session_options] == ["i1", "i2", "i3"]
+    assert not any(ch.isdigit() for ch in offer.text)  # the buttons carry the numbers
+
+    picked = await app.agent.handle(USER, task.turns[1])
+    plan = picked.plan
+    assert plan is not None and plan.session is not None
+    assert plan.session.session_id == "i2" and plan.session.reps_m == (800,) * 6
+    assert plan.distance_km == plan.session.total_km
+    assert plan.duration == plan.session.duration  # the session's own estimate, not the generic one
+    assert picked.session_options == ()
+    assert "{" not in picked.text and "800 m" not in picked.reply.message  # the template had no numbers ...
+    assert f"{plan.duration.p50_min:.0f} min" in picked.text  # ... code filled them in
+
+    assert picked.approval_token is not None
+    await app.agent.approve(picked.approval_token, user_id=USER.user_id)
+    assert "Session: 2 km warm-up · 6 × 800 m @" in app.fake_calendar.inserted[0].description

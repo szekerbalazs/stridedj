@@ -23,6 +23,7 @@ class EstimateMethod(StrEnum):
     REGRESSION = "regression"  # extrapolated from recent runs with the personal model
     RIEGEL = "riegel"  # textbook power law from the best recent anchor run
     DEFAULT = "default"  # no usable history: a conservative default pace
+    SESSION = "session"  # an interval session: its own structure (warm-up, reps at target pace, rests, cool-down)
 
 
 class DurationEstimate(Frozen):
@@ -88,4 +89,53 @@ class IntervalSessionDistance(Frozen):
     work_km: float = Field(gt=0)
     recovery_km: float = Field(ge=0)
     cooldown_km: float = Field(ge=0)
-    recovery_assumed: bool = Field(description="True when the runner gave no recovery: half a repetition was assumed")
+    recovery_assumed: bool = Field(description="True when the runner gave no recovery: standing rests (0 m) assumed")
+
+
+def format_pace(s_per_km: float) -> str:
+    """270.4 → "4:30" (min:s per km)."""
+    total = round(s_per_km)
+    return f"{total // 60}:{total % 60:02d}"
+
+
+class IntervalSession(Frozen):
+    """An interval session built by code from the runner's targets: distance reps, standing rests. The model refers
+    to it by `session_id`; the plan, the proposal card and the calendar event carry it."""
+
+    session_id: str
+    kind: str = Field(description="short / medium / pyramid")
+    reps_m: tuple[int, ...] = Field(min_length=1)
+    target_paces_s_per_km: tuple[float, ...] = Field(min_length=1, description="one per rep")
+    rest_s: tuple[int, ...] = Field(description="standing rest after each rep but the last")
+    warmup_km: float = Field(ge=0)
+    cooldown_km: float = Field(ge=0)
+    total_km: float = Field(gt=0, description="warm-up + reps + cool-down (standing rests cover no distance)")
+    duration: DurationEstimate
+
+    @model_validator(mode="after")
+    def _shape(self) -> Self:
+        if len(self.target_paces_s_per_km) != len(self.reps_m) or len(self.rest_s) != len(self.reps_m) - 1:
+            raise ValueError("one target pace per rep and one rest between consecutive reps")
+        return self
+
+    @property
+    def main_set(self) -> str:
+        """ "6 × 800 m @ 4:10, 90 s rest" or "400-800-1200-800-400 m @ 3:45/4:10/4:20/4:10/3:45"."""
+        if len(set(self.reps_m)) == 1:
+            rest = f", {self.rest_s[0]} s rest" if self.rest_s else ""
+            pace = format_pace(self.target_paces_s_per_km[0])
+            return f"{len(self.reps_m)} × {self.reps_m[0]} m @ {pace}{rest}"
+        reps = "-".join(str(r) for r in self.reps_m)
+        paces = "/".join(format_pace(p) for p in self.target_paces_s_per_km)
+        return f"{reps} m @ {paces}"
+
+    @property
+    def outline(self) -> str:
+        """The whole session in one line, for the proposal card and the calendar event."""
+        parts = []
+        if self.warmup_km:
+            parts.append(f"{self.warmup_km:g} km warm-up")
+        parts.append(f"{self.main_set} (standing rests)" if len(set(self.reps_m)) > 1 else self.main_set + " standing")
+        if self.cooldown_km:
+            parts.append(f"{self.cooldown_km:g} km cool-down")
+        return " · ".join(parts)

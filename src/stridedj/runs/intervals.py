@@ -54,6 +54,7 @@ class Rep(Frozen):
     hr_max_bpm: float | None = None
     cadence_spm: float | None = None
     recovery_s: float | None = Field(default=None, description="wall-clock time until the next rep (None: last)")
+    recovery_m: float | None = Field(default=None, description="distance covered until the next rep (≈ 0: standing)")
     recovery_hr_drop_bpm: float | None = Field(default=None, description="HR at the rep's end minus at the next start")
 
     @property
@@ -250,10 +251,11 @@ def _build_reps(series: RunSeries, blocks: Sequence[tuple[int, int]]) -> list[Re
         duration = series.timer_s[b] - series.timer_s[a]
         hrs = [h for h in series.hr_bpm[a : b + 1] if h]
         cadences = [c for c in series.cadence_spm[a : b + 1] if c]
-        recovery_s = drop = None
+        recovery_s = recovery_m = drop = None
         if k + 1 < len(blocks):
             nxt = blocks[k + 1][0]
             recovery_s = series.elapsed_s[nxt] - series.elapsed_s[b]
+            recovery_m = series.distance_m[nxt] - series.distance_m[b]
             end_hr = _hr_near(series, b, backwards=True)
             low_hr = _min_hr_between(series, b, nxt)
             drop = end_hr - low_hr if end_hr is not None and low_hr is not None else None
@@ -265,6 +267,7 @@ def _build_reps(series: RunSeries, blocks: Sequence[tuple[int, int]]) -> list[Re
                 hr_max_bpm=max(hrs) if hrs else None,
                 cadence_spm=statistics.fmean(cadences) if cadences else None,
                 recovery_s=recovery_s,
+                recovery_m=recovery_m,
                 recovery_hr_drop_bpm=drop,
             )
         )

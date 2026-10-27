@@ -29,6 +29,7 @@ from stridedj.domain import (
     DurationEstimate,
     Frozen,
     Genre,
+    IntervalSession,
     IntervalSessionDistance,
     Mood,
     MusicChoice,
@@ -66,12 +67,28 @@ class NoArgs(Frozen):
 class EstimateDurationArgs(Frozen):
     run_type: RunType = Field(description=RUN_TYPE_HELP)
     distance_km: float = Field(description="planned distance in km, e.g. 10 for '10k', 21.1 for a half marathon")
+    session_id: str | None = Field(
+        default=None, description="an interval session_id from suggest_interval_sessions the runner picked, or null"
+    )
 
     @field_validator("distance_km")
     @classmethod
     def _range(cls, v: float) -> float:
         if not 0 < v <= 60:
             raise ValueError("distance_km must be between 0 and 60; ask the runner")
+        return v
+
+
+class SuggestSessionsArgs(Frozen):
+    max_minutes: int | None = Field(
+        default=None, description="the runner's time limit for the whole session in minutes, or null if none"
+    )
+
+    @field_validator("max_minutes")
+    @classmethod
+    def _limit(cls, v: int | None) -> int | None:
+        if v is not None and not 20 <= v <= 240:
+            raise ValueError("max_minutes must be between 20 and 240, or null")
         return v
 
 
@@ -121,8 +138,8 @@ class IntervalDistanceArgs(Frozen):
     warmup_km: float = Field(description="warm-up in km (0 if the runner says none)")
     cooldown_km: float = Field(description="cool-down in km (0 if the runner says none)")
     recovery_m: float | None = Field(
-        description="jog recovery between repetitions in metres if the runner named one, else null (half a "
-        "repetition is assumed)"
+        description="jog recovery between repetitions in metres if the runner named one, else null (standing "
+        "rests: 0 m)"
     )
 
     @field_validator("reps")
@@ -181,6 +198,9 @@ class ProposePlanArgs(Frozen):
     distance_km: float = Field(description="the same distance passed to estimate_duration")
     slot_id: str = Field(description="a slot_id returned by find_free_slots")
     draft_id: str | None = Field(description="a draft_id returned by draft_playlist, or null for no playlist")
+    session_id: str | None = Field(
+        default=None, description="the interval session_id the runner picked (suggest_interval_sessions), or null"
+    )
 
 
 # ─────────────────────────────── result models (what the model reads) ───────────────────────────────
@@ -208,6 +228,21 @@ class DraftOut(Frozen):
 
 class RacePredictionsOut(Frozen):
     predictions: list[RacePrediction]
+    note: str
+
+
+class SessionOptionOut(Frozen):
+    session_id: str
+    main_set: str = Field(description="e.g. '6 × 800 m @ 4:10, 90 s rest' (target pace per km)")
+    total_km: float
+    expected_min: float
+    p80_min: float
+    slot_min: int
+
+
+class SessionOptionsOut(Frozen):
+    options: list[SessionOptionOut]
+    targets: str
     note: str
 
 
@@ -270,8 +305,46 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
             predictions=preds, note="estimates from training runs, not races; real race results are usually faster"
         )
 
+    def picked_session(session_id: str | None, run_type: RunType) -> IntervalSession | None:
+        if session_id is None:
+            return None
+        picked = state.sessions.get(session_id)
+        if picked is None:
+            raise ToolError("unknown session_id; call suggest_interval_sessions and use one of its session_ids")
+        if run_type is not RunType.INTERVALS:
+            raise ToolError("a session_id belongs to an interval run: use run_type 'intervals'")
+        return picked
+
     async def estimate_duration(args: EstimateDurationArgs) -> DurationEstimate:
-        return estimate(args.run_type, args.distance_km)
+        picked = picked_session(args.session_id, args.run_type)
+        return picked.duration if picked is not None else estimate(args.run_type, args.distance_km)
+
+    async def suggest_interval_sessions(args: SuggestSessionsArgs) -> SessionOptionsOut:
+        built = deps.insights.interval_options(now=now(), max_minutes=args.max_minutes)
+        if not built:
+            raise ToolError(f"no interval session fits in {args.max_minutes} minutes; tell the runner")
+        out: list[SessionOptionOut] = []
+        for option in built:
+            session_id = f"i{len(state.sessions) + 1}"
+            stored = option.model_copy(update={"session_id": session_id})
+            state.sessions[session_id] = stored
+            session.run_options.append(session_id)
+            out.append(
+                SessionOptionOut(
+                    session_id=session_id,
+                    main_set=stored.main_set,
+                    total_km=stored.total_km,
+                    expected_min=stored.duration.p50_min,
+                    p80_min=stored.duration.p80_min,
+                    slot_min=stored.duration.slot_min,
+                )
+            )
+        return SessionOptionsOut(
+            options=out,
+            targets="target paces per km come from the runner's own sessions and adapt after each one",
+            note="The runner sees these sessions as buttons. Reply with kind 'clarification' and one short sentence "
+            "asking which one; do not list them.",
+        )
 
     async def find_free_slots(args: FindSlotsArgs) -> SlotsOut:
         day = date.fromisoformat(args.date)
@@ -361,7 +434,12 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
         slot = state.slots.get(SlotId(args.slot_id))
         if slot is None:
             raise ToolError("unknown slot_id; call find_free_slots first and use one of its slot_ids")
-        duration = estimate(args.run_type, args.distance_km)
+        picked = picked_session(args.session_id, args.run_type)
+        if picked is not None and abs(picked.total_km - args.distance_km) > 0.05:
+            raise ToolError(
+                f"session {picked.session_id} is {picked.total_km:g} km: use distance_km={picked.total_km:g}"
+            )
+        duration = picked.duration if picked is not None else estimate(args.run_type, args.distance_km)
         if slot.duration_min < duration.slot_min:
             raise ToolError(
                 f"slot is {slot.duration_min:.0f} min but this run needs {duration.slot_min} min; "
@@ -383,6 +461,7 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
             slot=slot,
             cadence=cadence(args.run_type),
             playlist=draft,
+            session=picked,
             created_at=now(),
         )
         state.plans[plan.plan_id] = plan
@@ -396,7 +475,8 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
         return ProposalOut(
             proposal_id=plan.plan_id,
             summary=summary,
-            next_step="The runner now sees Approve/Cancel buttons. Finish with kind 'proposal' and this proposal_id.",
+            next_step="The runner now sees Approve/Cancel buttons. Finish with kind 'proposal'; write the facts as "
+            "placeholders ({start}, {expected}, {session}, {music}), never as numbers.",
         )
 
     return ToolRegistry(
@@ -419,9 +499,17 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
                 find_free_slots,
             ),
             Tool(
+                "suggest_interval_sessions",
+                "2-3 interval sessions for an interval run whose repetitions the runner did not name: short reps, "
+                "medium reps and a pyramid, at the runner's target paces with standing rests, each with total_km, "
+                "expected/p80 minutes and slot_min. The app shows them as buttons; the runner picks one.",
+                SuggestSessionsArgs,
+                suggest_interval_sessions,
+            ),
+            Tool(
                 "interval_distance",
                 "Total distance of an interval session from its parts: warm-up + reps x rep_m + recoveries between "
-                "the reps + cool-down. If no recovery is given, half a repetition is assumed (recovery_assumed). "
+                "the reps + cool-down. If no recovery is given, standing rests (0 m) are assumed (recovery_assumed). "
                 "Use total_km as distance_km for estimate_duration and propose_plan; never add it up yourself.",
                 IntervalDistanceArgs,
                 interval_distance,

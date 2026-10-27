@@ -101,7 +101,7 @@ async def _chat_loop(app_: App) -> None:
             return
         response = await app_.agent.handle(user, text)
         t = response.outcome.transcript
-        console.print(f"[bold magenta]stridedj>[/] {response.reply.message}")
+        console.print(f"[bold magenta]stridedj>[/] {response.text}")
         console.print(
             f"[dim]({response.reply.kind.value} · {t.steps} steps · {t.tool_calls} tool calls · "
             f"${t.cost_usd:.4f} · {t.duration_s:.1f}s)[/]"

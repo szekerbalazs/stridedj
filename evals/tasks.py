@@ -52,6 +52,7 @@ class Expect(BaseModel):
     mood: Mood | None = None
     music: MusicChoice | None = None
     genre: Genre | None = None
+    session_id: str | None = Field(default=None, description="the interval session the plan must carry, e.g. 'i2'")
     missing_fields: list[MissingField] = Field(default_factory=list)
     must_call: list[str] = Field(default_factory=list)
     max_steps: int = 8

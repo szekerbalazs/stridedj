@@ -20,6 +20,7 @@ from stridedj.llm.base import InputItem
 from stridedj.llm.fake import Policy, ScriptedTurn
 
 QUESTION_TOOLS = ("get_running_profile", "predict_race_times")
+SESSIONS_TOOL = "suggest_interval_sessions"
 
 
 def _current_turn_results(items: Sequence[InputItem]) -> dict[str, Any]:
@@ -30,12 +31,8 @@ def _current_turn_results(items: Sequence[InputItem]) -> dict[str, Any]:
     return {names[i["call_id"]]: json.loads(i["output"]) for i in turn if i.get("type") == "function_call_output"}
 
 
-def _final(
-    kind: ReplyKind, message: str, *, proposal_id: str | None = None, missing: list[MissingField] | None = None
-) -> ScriptedTurn:
-    return ScriptedTurn(
-        final=AgentReply(kind=kind, message=message, proposal_id=proposal_id, missing_fields=missing or [])
-    )
+def _final(kind: ReplyKind, message: str, *, missing: list[MissingField] | None = None) -> ScriptedTurn:
+    return ScriptedTurn(final=AgentReply(kind=kind, message=message, missing_fields=missing or []))
 
 
 def _planning_step(task: Task, tz: ZoneInfo, done: dict[str, Any], *, propose: bool) -> ScriptedTurn | None:
@@ -44,8 +41,10 @@ def _planning_step(task: Task, tz: ZoneInfo, done: dict[str, Any], *, propose: b
     run_type = e.run_type.value if e.run_type else "z2"
     distance = e.distance_km or 10.0
     if "estimate_duration" not in done:
-        return ScriptedTurn(tool_calls=[("estimate_duration", {"run_type": run_type, "distance_km": distance})])
+        estimate_args: dict[str, Any] = {"run_type": run_type, "distance_km": distance, "session_id": e.session_id}
+        return ScriptedTurn(tool_calls=[("estimate_duration", estimate_args)])
     estimate = done["estimate_duration"]
+    distance = estimate["distance_km"]  # a picked session's estimate carries its own total
     if "find_free_slots" not in done:
         resolved = resolve_date(e.date or "today", task.now, tz)
         day = resolved.isoformat()
@@ -89,6 +88,7 @@ def _planning_step(task: Task, tz: ZoneInfo, done: dict[str, Any], *, propose: b
         "distance_km": distance,
         "slot_id": slots[0]["slot_id"],
         "draft_id": draft["draft"]["draft_id"] if draft else None,
+        "session_id": e.session_id,
     }
     return ScriptedTurn(tool_calls=[("propose_plan", args)])
 
@@ -100,6 +100,14 @@ def reference_policy(task: Task, timezone: str = "Europe/Zurich") -> Policy:
 
     def policy(items: Sequence[InputItem]) -> ScriptedTurn:
         done = _current_turn_results(items)
+        user_turns = sum(1 for item in items if item.get("role") == "user")
+        offer_now = (e.session_id is not None and user_turns < len(task.turns)) or (
+            kind is ReplyKind.CLARIFICATION and SESSIONS_TOOL in e.must_call
+        )
+        if offer_now:  # an interval run without reps: offer sessions (as buttons) and ask which one
+            if SESSIONS_TOOL not in done:
+                return ScriptedTurn(tool_calls=[(SESSIONS_TOOL, {"max_minutes": None})])
+            return _final(ReplyKind.CLARIFICATION, "Which session would you like?")
         if kind is ReplyKind.CLARIFICATION:
             return _final(kind, "How far would you like to run?", missing=list(e.missing_fields))
         if kind is ReplyKind.REFUSAL:
@@ -113,7 +121,7 @@ def reference_policy(task: Task, timezone: str = "Europe/Zurich") -> Policy:
             if step is not None:
                 return step
         if kind is ReplyKind.PROPOSAL:
-            return _final(kind, "Planned, see the details below.", proposal_id=done["propose_plan"]["proposal_id"])
+            return _final(kind, "Planned for {start}, about {expected}. {music}.")
         return _final(kind, "Here is what I found.")
 
     return policy
