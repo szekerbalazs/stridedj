@@ -6,6 +6,7 @@
 * Idempotent: the calendar event id is derived from the plan hash (a retry can't create a duplicate), and executed
   plans are remembered (a second execution returns the first result).
 * Partial failures are reported, not hidden: if the playlist fails, the event is still created, and vice versa.
+* A created playlist is recorded in the playlist history (ids only), so the next drafts can rotate songs.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from zoneinfo import ZoneInfo
 from stridedj.cal.gcal import event_id_for
 from stridedj.domain import ExecutionResult, PlanId, RunPlan, RunType
 from stridedj.errors import StrideDJError
-from stridedj.ports import CalendarPort, PlaylistWriterPort
+from stridedj.ports import CalendarPort, PlaylistHistoryPort, PlaylistWriterPort
 
 log = logging.getLogger(__name__)
 
@@ -51,10 +52,18 @@ def playlist_name(plan: RunPlan, tz: ZoneInfo) -> str:
 
 
 class PlanExecutor:
-    def __init__(self, *, calendar: CalendarPort, playlists: PlaylistWriterPort, tz: ZoneInfo) -> None:
+    def __init__(
+        self,
+        *,
+        calendar: CalendarPort,
+        playlists: PlaylistWriterPort,
+        tz: ZoneInfo,
+        history: PlaylistHistoryPort | None = None,
+    ) -> None:
         self._calendar = calendar
         self._playlists = playlists
         self._tz = tz
+        self._history = history
         self._done: dict[PlanId, ExecutionResult] = {}
 
     async def execute(self, plan: RunPlan) -> ExecutionResult:
@@ -73,6 +82,8 @@ class PlanExecutor:
             except StrideDJError as exc:
                 log.warning("playlist creation failed: %s", exc)
                 errors.append("The playlist could not be created.")
+            else:
+                self._remember(plan)
 
         event_id: str | None = None
         try:
@@ -87,8 +98,21 @@ class PlanExecutor:
             errors.append("The calendar event could not be created.")
 
         result = ExecutionResult(
-            plan_id=plan.plan_id, calendar_event_id=event_id, playlist_url=playlist_url, errors=tuple(errors)
+            plan_id=plan.plan_id,
+            calendar_event_id=event_id,
+            playlist_url=playlist_url,
+            playlist_draft_id=plan.playlist.draft_id if playlist_url and plan.playlist else None,
+            errors=tuple(errors),
         )
         if not errors:
             self._done[plan.plan_id] = result
         return result
+
+    def _remember(self, plan: RunPlan) -> None:
+        """Record the created playlist for rotation. Best effort: a local DB problem must not fail an approval."""
+        if self._history is None or plan.playlist is None:
+            return
+        try:
+            self._history.record_created(plan.playlist)
+        except Exception:
+            log.exception("could not record the created playlist")

@@ -14,6 +14,7 @@ from stridedj.music.playlist import (
     MoodReference,
     assemble_playlist,
     fold_tempo,
+    is_music,
     sanitise_genre,
     summarise,
     top_genres,
@@ -64,7 +65,13 @@ def _candidate(
 
 
 def _assemble(  # type: ignore[no-untyped-def]
-    candidates: list[Candidate], *, duration_min: float = 30, mood: Mood = Mood.USUAL, seed: int = 0, **params: object
+    candidates: list[Candidate],
+    *,
+    duration_min: float = 30,
+    mood: Mood = Mood.USUAL,
+    seed: int = 0,
+    style_floor: float | None = None,
+    **params: object,
 ):
     return assemble_playlist(
         candidates,
@@ -75,6 +82,7 @@ def _assemble(  # type: ignore[no-untyped-def]
         mood_reference=REFERENCE,
         rng=random.Random(seed),
         params=AssemblyParams(**params),  # type: ignore[arg-type]
+        style_floor=style_floor,
     )
 
 
@@ -218,3 +226,41 @@ def test_ladder_validation() -> None:
         AssemblyParams(tolerance_ladder_bpm=(5.0, 3.0))
     with pytest.raises(ValueError, match="duration_min"):
         _assemble([_candidate(1)], duration_min=0)
+
+
+# ─────────────────────────────── pool hygiene, fit and rotation (off-style songs) ───────────────
+def test_is_music_drops_spoken_word_and_very_long_recordings_but_keeps_rap() -> None:
+    song = _candidate(1)
+    assert is_music(song.track, song.features)
+    assert not is_music(song.track, song.features.model_copy(update={"speechiness": 0.94}))  # audiobook chapter
+    assert is_music(song.track, song.features.model_copy(update={"speechiness": 0.45}))  # rap
+    assert not is_music(song.track.model_copy(update={"duration_ms": 60 * 60_000}), song.features)  # a 1-hour mix
+
+
+def test_style_floor_drops_new_songs_below_it_but_never_favourites() -> None:
+    favourites = [_candidate(n, style=-0.5) for n in range(1, 4)]  # running-playlist tracks: always allowed
+    good_new = [_candidate(n, style=0.6, familiar=False) for n in range(10, 13)]
+    off_style = [_candidate(n, style=0.1, familiar=False) for n in range(20, 23)]
+    # far too long to fill: everything allowed is used, and the off-style songs still are not
+    result = _assemble(favourites + good_new + off_style, duration_min=200, style_floor=0.5)
+    assert set(result.draft.track_ids) == {c.track.track_id for c in favourites + good_new}
+    assert result.draft.total_min < 200  # shorter, honestly, instead of filler
+
+
+def test_no_floor_means_every_eligible_song_may_be_used() -> None:
+    off_style = [_candidate(n, style=0.1, familiar=False) for n in range(20, 23)]
+    assert len(_assemble(off_style, duration_min=200).draft.track_ids) == 3
+
+
+def test_familiar_artist_bonus_lifts_a_new_song_over_the_floor() -> None:
+    by_known_artist = _candidate(1, style=0.4, familiar=False).model_copy(update={"familiar_artist": True})
+    unknown = _candidate(2, style=0.4, familiar=False)
+    result = _assemble([by_known_artist, unknown], duration_min=60, style_floor=0.5)  # 0.4 + 0.25 ≥ 0.5 > 0.4
+    assert result.draft.track_ids == (by_known_artist.track.track_id,)
+
+
+def test_songs_of_recent_playlists_rank_lower() -> None:
+    fresh = [_candidate(n, style=0.5) for n in range(1, 6)]
+    used = [_candidate(n, style=0.6).model_copy(update={"recent_uses": 1}) for n in range(10, 15)]
+    result = _assemble(fresh + used, duration_min=18, novelty_target=0)  # 5 × 4 min covers 18 min
+    assert set(result.draft.track_ids) == {c.track.track_id for c in fresh}  # 0.6 − 0.3 < 0.5

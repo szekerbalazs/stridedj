@@ -24,6 +24,7 @@ import numpy as np
 from stridedj.domain import ArtistId, AudioFeatures, Frozen, TimeSlot, Track, TrackId
 from stridedj.music.plays_logger import PlaysLogger
 from stridedj.music.service import PlannerSettings, PlaylistPlannerService
+from stridedj.ports import PlaylistHistoryPort
 
 DEMO_NOW = datetime(2026, 10, 17, 18, 0, tzinfo=UTC)
 DEMO_RUNNING_PLAYLIST_ID = "demorunningplaylist001"
@@ -363,7 +364,11 @@ class RecordingPlaylistWriter:
 
 # ─────────────────────────────── one-call wiring for --demo and evals ───────────────────────────────
 def build_demo_planner(
-    world: DemoMusicWorld | None = None, *, seed: int = 7, settings: PlannerSettings | None = None
+    world: DemoMusicWorld | None = None,
+    *,
+    seed: int = 7,
+    settings: PlannerSettings | None = None,
+    history: PlaylistHistoryPort | None = None,
 ) -> PlaylistPlannerService:
     """A planner over the demo world: fakes for every port, an in-memory plays log pre-filled with the full history
     (the fake's recently-played only returns the last 50, like Spotify)."""
@@ -378,6 +383,7 @@ def build_demo_planner(
         track_lookup=library,
         plays=plays,
         run_windows=lambda: world.run_windows,
+        history=history,
         settings=settings,
         seed=seed,
     )

@@ -20,7 +20,7 @@ from typing import Literal
 import yaml
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
-from stridedj.domain import DayPart, MissingField, Mood, ReplyKind, RunType
+from stridedj.domain import DayPart, Genre, MissingField, Mood, MusicChoice, ReplyKind, RunType
 
 TASKS_DIR = Path(__file__).parent / "tasks"  # one YAML file per suite, a list of tasks each
 DEFAULT_NOW = datetime.fromisoformat("2026-10-17T15:00:00+02:00")  # Saturday afternoon in Zurich
@@ -50,6 +50,8 @@ class Expect(BaseModel):
     )
     playlist: bool | None = None
     mood: Mood | None = None
+    music: MusicChoice | None = None
+    genre: Genre | None = None
     missing_fields: list[MissingField] = Field(default_factory=list)
     must_call: list[str] = Field(default_factory=list)
     max_steps: int = 8

@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from evals.graders import resolve_date
 from evals.tasks import Task, expected_kinds
-from stridedj.domain import AgentReply, DayPart, MissingField, Mood, ReplyKind, Weekday
+from stridedj.domain import AgentReply, DayPart, MissingField, Mood, MusicChoice, ReplyKind, Weekday
 from stridedj.llm.base import InputItem
 from stridedj.llm.fake import Policy, ScriptedTurn
 
@@ -64,7 +64,19 @@ def _planning_step(task: Task, tz: ZoneInfo, done: dict[str, Any], *, propose: b
         ]
         if e.playlist is not False:
             mood = (e.mood or Mood.USUAL).value
-            calls.append(("draft_playlist", {"run_type": run_type, "duration_min": estimate["p80_min"], "mood": mood}))
+            music = (e.music or MusicChoice.USUAL).value
+            calls.append(
+                (
+                    "draft_playlist",
+                    {
+                        "run_type": run_type,
+                        "duration_min": estimate["p80_min"],
+                        "mood": mood,
+                        "music": music,
+                        "genre": e.genre.value if e.genre else None,
+                    },
+                )
+            )
         return ScriptedTurn(tool_calls=calls)  # independent → in parallel, like the prompt asks
     if "propose_plan" in done or not propose:
         return None

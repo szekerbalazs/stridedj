@@ -105,3 +105,34 @@
   description: An explicit recovery overrides the default; total 2 + 5 + 4 × 0.4 + 2 = 10.6 km.
   turns: ["5x1000 m with 400 m jog recoveries, 2 km warm-up and 2 km cool-down, tomorrow morning"]
   expect: {kind: proposal, run_type: intervals, distance_km: 10.6, date: tomorrow, day_part: morning}
+
+# ── where the songs come from ──
+- id: c18-only-songs-i-know
+  suite: capability
+  description: Asking for known songs only maps to music=familiar.
+  turns: ["10k Z2 tonight, only songs I know please"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: today, day_part: evening, music: familiar}
+
+- id: c19-something-new
+  suite: capability
+  description: Asking for new music maps to music=discover (German, as typed on the phone).
+  turns: ["8k Z2 morgen früh, mit neuer Musik die ich noch nicht kenne"]
+  expect: {kind: proposal, run_type: z2, distance_km: 8, date: tomorrow, day_part: morning, music: discover}
+
+- id: c20-music-followup
+  suite: capability
+  description: A follow-up changes only where the songs come from; everything else is kept.
+  turns: ["10k Z2 tonight", "Same run, but only my running songs"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: today, day_part: evening, music: familiar}
+
+- id: c21-genre-request
+  suite: capability
+  description: A named genre (as typed, "dnb") is passed as the closed genre value.
+  turns: ["Z2 run tonight, 10k, with some dnb"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: today, day_part: evening, genre: drum and bass}
+
+- id: c22-genre-in-other-words
+  suite: capability
+  description: A German genre word ("Deutschrap") maps to the closest genre value.
+  turns: ["Morgen früh 8 km locker, bitte mit Deutschrap"]
+  expect: {kind: proposal, run_type: z2, distance_km: 8, date: tomorrow, day_part: morning, genre: hip hop}

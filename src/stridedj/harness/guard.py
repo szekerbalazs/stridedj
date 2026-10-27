@@ -63,6 +63,10 @@ class InputGuard:
         self._per = per
         self._recent: dict[int, deque[float]] = defaultdict(deque)
 
+    def is_allowed(self, user_id: int) -> bool:
+        """Allowlist only: for button presses, which carry no text and do not count towards the rate limit."""
+        return user_id in self._allowed
+
     def check(self, *, user_id: int, text: str) -> GuardDecision:
         if user_id not in self._allowed:
             return GuardDecision(allowed=False, reason="not_allowlisted", notice="This is a private bot.")

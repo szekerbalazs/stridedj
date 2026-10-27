@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
-from stridedj.domain.base import Frozen, PlanId, UserId
+from stridedj.domain.base import DraftId, Frozen, PlanId, UserId
 from stridedj.domain.calendar import TimeSlot
 from stridedj.domain.music import PlaylistDraft
 from stridedj.domain.planning import CadenceTarget, DurationEstimate
@@ -102,4 +102,5 @@ class ExecutionResult(Frozen):
     plan_id: PlanId
     calendar_event_id: str | None = None
     playlist_url: str | None = None
+    playlist_draft_id: DraftId | None = Field(default=None, description="set when a playlist was created")
     errors: tuple[str, ...] = Field(default=(), description="user-safe descriptions of actions that failed")

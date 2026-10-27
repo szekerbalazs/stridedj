@@ -10,7 +10,15 @@ from stridedj.domain.agent import (
 )
 from stridedj.domain.base import ActivityId, ArtistId, DraftId, Frozen, PlanId, SlotId, TrackId, UserId
 from stridedj.domain.calendar import DayPart, SlotOption, SlotRequest, StartCheck, StartStatus, TimeSlot, Weekday
-from stridedj.domain.music import AudioFeatures, Mood, PlaylistDraft, PlaylistDraftSummary, Track
+from stridedj.domain.music import (
+    AudioFeatures,
+    Genre,
+    Mood,
+    MusicChoice,
+    PlaylistDraft,
+    PlaylistDraftSummary,
+    Track,
+)
 from stridedj.domain.planning import (
     CadenceTarget,
     DurationEstimate,
@@ -35,12 +43,14 @@ __all__ = [
     "EstimateMethod",
     "ExecutionResult",
     "Frozen",
+    "Genre",
     "HeartRateZones",
     "IntervalSessionDistance",
     "Lap",
     "LapIntensity",
     "MissingField",
     "Mood",
+    "MusicChoice",
     "PlanId",
     "PlaylistDraft",
     "PlaylistDraftSummary",

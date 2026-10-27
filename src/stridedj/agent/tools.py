@@ -2,7 +2,8 @@
 
 Tool design rules applied here (they are also the answer to "how do you design tools for an agent?"):
 * **Descriptions are prompts.** Each says what it does, when to use it, units, and what to pass from other tools.
-* **Closed sets as enums** (run type, day part, mood): the model can't invent values, and the schema documents them.
+* **Closed sets as enums** (run type, day part, mood, music, genre): the model can't invent values; the schema
+  documents them.
 * **References, not values**: plans are assembled from ids (`slot_id`, `draft_id`); numbers come from our state.
 * **Aggregates only**: no GPS, no raw series, no activity names, no song titles, no calendar titles.
 * **Errors are instructions** the model can act on ("slot too short: call find_free_slots with duration_min=75").
@@ -27,8 +28,10 @@ from stridedj.domain import (
     DraftId,
     DurationEstimate,
     Frozen,
+    Genre,
     IntervalSessionDistance,
     Mood,
+    MusicChoice,
     PlanId,
     PlaylistDraftSummary,
     RacePrediction,
@@ -155,6 +158,15 @@ class DraftPlaylistArgs(Frozen):
     run_type: RunType = Field(description=RUN_TYPE_HELP)
     duration_min: float = Field(description="music length in minutes: pass p80_min from estimate_duration")
     mood: Mood = Field(description="'usual' unless the runner asks for more energetic or calmer music")
+    music: MusicChoice = Field(
+        description="where the songs come from: 'usual' unless the runner asks otherwise; 'familiar' = only songs "
+        "they know (their running playlists and those artists); 'discover' = more new songs in their style"
+    )
+    genre: Genre | None = Field(
+        default=None,
+        description="only songs of this genre, if the runner names one (map their words to the closest value); "
+        "null otherwise",
+    )
 
     @field_validator("duration_min")
     @classmethod
@@ -330,6 +342,8 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
             cadence=target,
             duration_min=args.duration_min,
             mood=args.mood,
+            music=args.music,
+            genre=args.genre,
         )
         state.drafts[draft.draft_id] = draft
         summary = PlaylistDraftSummary(

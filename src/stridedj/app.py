@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 import tempfile
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Literal
@@ -29,7 +30,16 @@ from stridedj.harness.executor import PlanExecutor
 from stridedj.harness.loop import Budget
 from stridedj.llm.base import LLMClient
 from stridedj.music.demo import RecordingPlaylistWriter, build_demo_planner
-from stridedj.ports import CalendarPort, Clock, PlaylistPlanner, PlaylistWriterPort, RunInsights, RunSource
+from stridedj.music.history import PlaylistHistory
+from stridedj.ports import (
+    CalendarPort,
+    Clock,
+    PlaylistHistoryPort,
+    PlaylistPlanner,
+    PlaylistWriterPort,
+    RunInsights,
+    RunSource,
+)
 from stridedj.runs.service import RunInsightsService, zones_from_settings
 from stridedj.runs.sources.demo import DemoRunSource
 from stridedj.runs.store import SqliteRunRepository
@@ -51,6 +61,10 @@ class App:
     writer: PlaylistWriterPort
     clock: Clock
     timezone: str
+    refresh_music: Callable[[], Awaitable[int]] | None = field(default=None, kw_only=True)
+    """Background job: pull the latest Spotify plays into the log and warm the genre cache (None = nothing to do)."""
+    history: PlaylistHistoryPort | None = field(default=None, kw_only=True)
+    """Created playlists and the runner's feedback (the bot's 👍/👎 buttons write here)."""
 
 
 @dataclass
@@ -93,13 +107,14 @@ async def build_demo_app(
         end = datetime.combine(today, time(22, 0), tzinfo=tz)
         cal.add_busy(TimeSlot(start=start, end=end), title="Concert")
 
-    planner = build_demo_planner()
+    history = PlaylistHistory(Path(":memory:"))
+    planner = build_demo_planner(history=history)
     writer = RecordingPlaylistWriter()
     agent = StrideAgent(
         llm=llm,
         deps=AgentDeps(insights=insights, slots=SlotFinderService(cal), playlists=planner, clock=clock),
         approvals=ApprovalStore(clock=clock),
-        executor=PlanExecutor(calendar=cal, playlists=writer, tz=tz),
+        executor=PlanExecutor(calendar=cal, playlists=writer, tz=tz, history=history),
         budget=budget,
         traces_dir=traces_dir,
         prompt=prompt,
@@ -115,6 +130,7 @@ async def build_demo_app(
         timezone=timezone,
         fake_calendar=cal,
         fake_writer=writer,
+        history=history,
     )
 
 
@@ -155,12 +171,12 @@ async def build_live_app(settings: Settings, llm: LLMClient, *, usage_sink: Usag
         ]
 
     calendar = GoogleCalendarClient(settings.google, tz=tz)
-    planner, writer = build_live_music(settings, run_windows=run_windows)
+    music = build_live_music(settings, run_windows=run_windows)
     agent = StrideAgent(
         llm=llm,
-        deps=AgentDeps(insights=insights, slots=SlotFinderService(calendar), playlists=planner, clock=clock),
+        deps=AgentDeps(insights=insights, slots=SlotFinderService(calendar), playlists=music.planner, clock=clock),
         approvals=ApprovalStore(clock=clock),
-        executor=PlanExecutor(calendar=calendar, playlists=writer, tz=tz),
+        executor=PlanExecutor(calendar=calendar, playlists=music.writer, tz=tz, history=music.history),
         traces_dir=settings.app.data_dir / "traces",
         usage_sink=usage_sink,
     )
@@ -168,8 +184,10 @@ async def build_live_app(settings: Settings, llm: LLMClient, *, usage_sink: Usag
         agent=agent,
         insights=insights,
         calendar=calendar,
-        playlists=planner,
-        writer=writer,
+        playlists=music.planner,
+        writer=music.writer,
         clock=clock,
         timezone=settings.athlete.timezone,
+        refresh_music=music.planner.refresh,
+        history=music.history,
     )

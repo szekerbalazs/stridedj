@@ -8,7 +8,19 @@ from pathlib import Path
 
 import pytest
 
-from stridedj.domain import ArtistId, AudioFeatures, CadenceTarget, Mood, RunType, Track, TrackId
+from stridedj.domain import (
+    ArtistId,
+    AudioFeatures,
+    CadenceTarget,
+    DraftId,
+    Genre,
+    Mood,
+    MusicChoice,
+    PlaylistDraft,
+    RunType,
+    Track,
+    TrackId,
+)
 from stridedj.errors import ExternalAPIError
 from stridedj.music.demo import (
     MALICIOUS_TRACK_NAMES,
@@ -19,6 +31,8 @@ from stridedj.music.demo import (
     build_demo_planner,
     build_demo_world,
 )
+from stridedj.music.genres import genres_from_tags
+from stridedj.music.history import PlaylistHistory
 from stridedj.music.playlist import fold_tempo, summarise
 from stridedj.music.plays_logger import PlaysLogger
 from stridedj.music.service import ChainedTrackLookup, PlannerSettings, PlaylistPlannerService
@@ -223,3 +237,200 @@ async def test_fake_library_mimics_spotify_limits(world: DemoMusicWorld) -> None
     assert len(hits) == 7
     features: Mapping[TrackId, AudioFeatures] = await world.audio_features().audio_features(list(world.tracks))
     assert len(features) == len(world.features)
+
+
+# ─────────────────────────────── where the songs come from (off-style songs) ───────────────
+def _planner(
+    world: DemoMusicWorld, *, features: FakeAudioFeatures | None = None, history: PlaylistHistory | None = None
+) -> tuple[PlaylistPlannerService, FakeAudioFeatures]:
+    library = world.library()
+    audio = features or world.audio_features()
+    plays = PlaysLogger(Path(":memory:"))
+    plays.record(list(world.plays))
+    planner = PlaylistPlannerService(
+        library=library,
+        features=audio,
+        running_playlist_ids=[world.running_playlist_id],
+        track_lookup=library,
+        plays=plays,
+        run_windows=lambda: world.run_windows,
+        history=history,
+        seed=3,
+    )
+    return planner, audio
+
+
+def _positive_artists(world: DemoMusicWorld) -> set[ArtistId]:
+    plays = PlaysLogger(Path(":memory:"))
+    plays.record(list(world.plays))
+    positives = set(world.running_track_ids) | set(plays.plays_within(world.run_windows))
+    return {artist for t in positives for artist in world.tracks[t].artist_ids}
+
+
+async def test_spoken_word_is_never_drafted(world: DemoMusicWorld) -> None:
+    """Spoken word saved as tracks: tempo-perfect, but never music to run to."""
+    running = set(world.running_track_ids)
+    spoken = {t for t in world.saved_track_ids if t not in running and t in world.features}
+    features = {t: f.model_copy(update={"speechiness": 0.94}) if t in spoken else f for t, f in world.features.items()}
+    planner, _ = _planner(world, features=FakeAudioFeatures(features))
+    for spm in (160.0, 168.0, 176.0):
+        draft = await planner.draft(run_type=RunType.Z2, cadence=_cadence(spm), duration_min=60, mood=Mood.USUAL)
+        assert not spoken & set(draft.track_ids)
+
+
+async def test_usual_fills_from_the_own_library_without_recommendations(world: DemoMusicWorld) -> None:
+    planner, audio = _planner(world)
+    draft = await planner.draft(run_type=RunType.Z2, cadence=_cadence(), duration_min=40, mood=Mood.USUAL)
+    assert draft.total_min >= 40
+    assert audio.calls["recommendations"] == 0  # own library first: no external suggestions needed
+
+
+async def test_recommendations_fill_gaps_when_the_library_is_too_short(world: DemoMusicWorld) -> None:
+    planner, audio = _planner(world)
+    await planner.draft(run_type=RunType.Z2, cadence=_cadence(), duration_min=300, mood=Mood.USUAL)
+    assert audio.calls["recommendations"] >= 1
+
+
+async def test_familiar_keeps_to_the_running_music_and_its_artists(world: DemoMusicWorld) -> None:
+    planner, audio = _planner(world)
+    draft = await planner.draft(
+        run_type=RunType.Z2, cadence=_cadence(), duration_min=300, mood=Mood.USUAL, music=MusicChoice.FAMILIAR
+    )
+    artists = _positive_artists(world)
+    assert draft.track_ids
+    assert all(set(world.tracks[t].artist_ids) & artists for t in draft.track_ids)
+    assert audio.calls["recommendations"] == 0  # even when the run is far longer than the music
+
+
+async def test_discover_asks_for_more_new_songs(world: DemoMusicWorld) -> None:
+    planner, audio = _planner(world)
+    draft = await planner.draft(
+        run_type=RunType.Z2, cadence=_cadence(), duration_min=60, mood=Mood.USUAL, music=MusicChoice.DISCOVER
+    )
+    assert draft.novelty_share >= 0.6
+    assert audio.calls["recommendations"] >= 1
+
+
+async def test_songs_of_created_playlists_rotate(world: DemoMusicWorld) -> None:
+    history = PlaylistHistory(Path(":memory:"))
+    planner, _ = _planner(world, history=history)
+
+    async def draft() -> tuple[TrackId, ...]:
+        made = await planner.draft(run_type=RunType.Z2, cadence=_cadence(), duration_min=40, mood=Mood.USUAL)
+        return made.track_ids
+
+    first = await draft()
+    assert len(set(first) & set(await draft())) / len(first) > 0.8  # re-planning in a chat keeps its songs
+    history.record_created(
+        await planner.draft(run_type=RunType.Z2, cadence=_cadence(), duration_min=40, mood=Mood.USUAL)
+    )
+    # ... the next run gets a clearly different one (the strongest favourites may come back: ~40-55 % here, and
+    # 0-30 % between later playlists, measured on this world with the default penalty)
+    assert len(set(first) & set(await draft())) / len(first) <= 0.6
+
+
+# ─────────────────────────────── genres (Last.fm live; the demo world's own tags here) ───────────────
+async def test_a_chosen_genre_gives_only_songs_of_that_genre(world: DemoMusicWorld) -> None:
+    planner, _ = _planner(world)
+    draft = await planner.draft(
+        run_type=RunType.Z2, cadence=_cadence(), duration_min=40, mood=Mood.USUAL, genre=Genre.DRUM_AND_BASS
+    )
+    assert draft.track_ids
+    for track_id in draft.track_ids:
+        lead = world.tracks[track_id].artist_ids[0]
+        assert Genre.DRUM_AND_BASS in genres_from_tags(world.artist_genres.get(lead, ()))
+    assert draft.top_genres == ("drum and bass",)  # closed values only: safe for the model
+
+
+class _CachedGenres:
+    """Every artist is already in the cache: no lookup may count against the budget."""
+
+    def __init__(self, world: DemoMusicWorld) -> None:
+        self.world, self.calls = world, 0
+
+    def cached(self, artist_id: ArtistId) -> Sequence[str] | None:
+        return self.world.artist_genres.get(artist_id, ())
+
+    async def artist_genres(self, artist_id: ArtistId, artist_name: str) -> Sequence[str]:
+        self.calls += 1
+        return ()
+
+
+async def test_cached_genres_are_used_beyond_the_lookup_budget(world: DemoMusicWorld) -> None:
+    source = _CachedGenres(world)
+    library = world.library()
+    planner = PlaylistPlannerService(
+        library=library,
+        features=world.audio_features(),
+        running_playlist_ids=[world.running_playlist_id],
+        genres=source,
+        settings=PlannerSettings(max_genre_lookups=0),
+        seed=1,
+    )
+    draft = await planner.draft(run_type=RunType.Z2, cadence=_cadence(), duration_min=40, mood=Mood.USUAL)
+    assert draft.top_genres  # known from the cache although no lookup was allowed
+    assert source.calls == 0
+    assert library.calls["artist_genres"] == 0
+
+
+async def test_warm_up_looks_up_each_library_artist_once(world: DemoMusicWorld) -> None:
+    library = world.library()
+    planner = PlaylistPlannerService(
+        library=library, features=world.audio_features(), running_playlist_ids=[world.running_playlist_id], seed=1
+    )
+    looked_up = await planner.warm_up()
+    library_artists = {world.tracks[t].artist_ids[0] for t in (*world.running_track_ids, *world.saved_track_ids)}
+    assert looked_up == library.calls["artist_genres"] == len(library_artists)
+
+
+# ─────────────────────────────── feedback (the bot's 👍 / 👎) ───────────────
+async def test_disliked_songs_are_never_drafted_again(world: DemoMusicWorld) -> None:
+    history = PlaylistHistory(Path(":memory:"))
+    planner, _ = _planner(world, history=history)
+    first = await planner.draft(run_type=RunType.Z2, cadence=_cadence(), duration_min=40, mood=Mood.USUAL)
+    history.record_created(first)
+    for track_id in first.track_ids:
+        history.toggle_song_dislike(track_id)
+    again = await planner.draft(run_type=RunType.Z2, cadence=_cadence(), duration_min=300, mood=Mood.USUAL)
+    assert not set(first.track_ids) & set(again.track_ids)
+
+
+async def test_a_liked_new_song_counts_as_familiar(world: DemoMusicWorld) -> None:
+    """👍 on a playlist turns its new songs into favourites: 'familiar' may then use them."""
+    artists = _positive_artists(world)
+    stranger = next(
+        t
+        for t in world.saved_track_ids
+        if t in world.features
+        and not set(world.tracks[t].artist_ids) & artists
+        and fold_tempo(world.features[t].tempo_bpm, 168.0)[1] <= 3
+        and world.features[t].speechiness <= 0.66
+    )
+    history = PlaylistHistory(Path(":memory:"))
+    planner, _ = _planner(world, history=history)
+
+    artist = world.tracks[stranger].artist_ids[0]
+
+    async def familiar_artists_used() -> set[ArtistId]:
+        made = await planner.draft(
+            run_type=RunType.Z2, cadence=_cadence(), duration_min=300, mood=Mood.USUAL, music=MusicChoice.FAMILIAR
+        )
+        return {a for t in made.track_ids for a in world.tracks[t].artist_ids}
+
+    assert artist not in await familiar_artists_used()
+    history.record_created(
+        PlaylistDraft(
+            draft_id=DraftId("cccccccccccc"),
+            run_type=RunType.Z2,
+            target_spm=168,
+            tolerance_bpm=3,
+            track_ids=(stranger,),
+            total_min=4,
+            mean_abs_bpm_error=0,
+            novelty_share=1,
+        )
+    )
+    history.rate_playlist("cccccccccccc", 1)
+    # the liked song is a favourite now, so its artist is familiar (which of their songs win is up to the ranking:
+    # max 2 per artist, and the liked one was just used, so rotation ranks it lower)
+    assert artist in await familiar_artists_used()

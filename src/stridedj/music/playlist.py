@@ -9,6 +9,11 @@ folded by k ∈ {½, 1, 2} to the value closest to the target cadence.
 
 Tolerance ladder: ±3 BPM is barely noticeable while running, ±8 is still comfortable. We use the tightest level that
 can fill the requested duration and record which one was used, so the agent can be honest ("matched within ±5 BPM").
+
+Fit: a new song must look like the running music. Its fit is the style score plus a bonus when one of its artists is
+already in the running music; below the caller's `style_floor` it is left out, so a short library gives a shorter
+playlist instead of off-style filler (without it, drafts on a real library were mostly "everyday music", and spoken
+word got in). Songs from recently created playlists rank lower (rotation), so runs get variety.
 """
 
 from __future__ import annotations
@@ -39,7 +44,15 @@ TEMPO_FACTORS: tuple[float, ...] = (1.0, 0.5, 2.0)  # order = preference on an e
 DEFAULT_TOLERANCE_LADDER_BPM: tuple[float, ...] = (3.0, 5.0, 8.0)
 MAX_TOP_GENRES = 5
 MAX_GENRE_CHARS = 24
+MAX_SPEECHINESS = 0.66  # Spotify's definition: above 0.66 a track is "probably made entirely of spoken words"
+MAX_TRACK_MS = 15 * 60_000  # longer = a DJ mix, a podcast-like recording or a whole audiobook chapter
 _GENRE_DISALLOWED = re.compile(r"[^a-z0-9 &-]")
+
+
+def is_music(track: Track, features: AudioFeatures) -> bool:
+    """False for spoken word (audiobooks, podcasts saved as tracks) and very long recordings. Rap stays in: its
+    speechiness is typically 0.1-0.5."""
+    return features.speechiness <= MAX_SPEECHINESS and track.duration_ms <= MAX_TRACK_MS
 
 
 # ─────────────────────────────── tempo ───────────────────────────────
@@ -94,6 +107,8 @@ class Candidate(Frozen):
     genres: tuple[str, ...] = ()
     style_score: float
     in_running_playlists: bool = Field(description="False = novel: counts towards the novelty quota")
+    familiar_artist: bool = Field(default=False, description="novel, but by an artist of the running music")
+    recent_uses: int = Field(default=0, ge=0, description="in how many recently created playlists it already was")
 
 
 class MoodReference(Frozen):
@@ -110,6 +125,8 @@ class AssemblyParams(Frozen):
     novelty_target: float = Field(default=0.3, ge=0, le=1, description="minimum share of novel tracks, when possible")
     max_tracks_per_artist: int = Field(default=2, ge=1)
     jitter: float = Field(default=0.02, ge=0, description="random tie-breaking amplitude: variety across drafts")
+    artist_bonus: float = Field(default=0.25, ge=0, description="added to a novel song's fit if its artist is familiar")
+    rotation_penalty: float = Field(default=0.3, ge=0, description="rank penalty per recent playlist it was in")
 
     @model_validator(mode="after")
     def _ladder(self) -> Self:
@@ -132,7 +149,8 @@ class _Scored:
     candidate: Candidate
     folded_bpm: float
     bpm_error: float
-    base_rank: float  # style + mood + jitter; the tempo penalty is added per ladder level
+    fit: float  # style score + artist bonus: what the style floor is compared with
+    base_rank: float  # fit + mood − rotation + jitter; the tempo penalty is added per ladder level
 
     @property
     def novel(self) -> bool:
@@ -234,12 +252,14 @@ def _score_candidates(
     scored: list[_Scored] = []
     for candidate in unique:
         folded_bpm, bpm_error = fold_tempo(candidate.features.tempo_bpm, target_spm)
+        fit = candidate.style_score + (params.artist_bonus if candidate.familiar_artist else 0.0)
         base = (
-            candidate.style_score
+            fit
             + mood_term(candidate.features, mood, mood_reference, params.mood_weight)
+            - params.rotation_penalty * candidate.recent_uses
             + rng.uniform(-params.jitter, params.jitter)
         )
-        scored.append(_Scored(candidate=candidate, folded_bpm=folded_bpm, bpm_error=bpm_error, base_rank=base))
+        scored.append(_Scored(candidate=candidate, folded_bpm=folded_bpm, bpm_error=bpm_error, fit=fit, base_rank=base))
     return scored
 
 
@@ -263,10 +283,12 @@ def assemble_playlist(
     mood_reference: MoodReference,
     rng: random.Random,
     params: AssemblyParams | None = None,
+    style_floor: float | None = None,
 ) -> AssembledPlaylist:
     """Plan a playlist of at least `duration_min` minutes whose folded tempos match `target_spm`.
 
-    Walks the tolerance ladder and stops at the first level whose greedy fill covers the duration. If even the
+    Novel candidates whose fit is below `style_floor` are left out (None = no floor); running-playlist tracks never
+    are. Walks the tolerance ladder and stops at the first level whose greedy fill covers the duration. If even the
     widest level cannot, the widest level's (shorter) playlist is returned: `total_min < duration_min` then tells the
     caller honestly that the library is too small for this cadence. The final order is best-ranked first.
     """
@@ -277,6 +299,8 @@ def assemble_playlist(
     scored = _score_candidates(
         candidates, target_spm=target_spm, mood=mood, mood_reference=mood_reference, params=params, rng=rng
     )
+    if style_floor is not None:
+        scored = [s for s in scored if not s.novel or s.fit >= style_floor]
     duration_ms = round(duration_min * 60_000)
     tolerance_bpm, fill = params.tolerance_ladder_bpm[0], _GreedyFill([], params)
     for tolerance_bpm in params.tolerance_ladder_bpm:

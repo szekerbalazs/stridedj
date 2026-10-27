@@ -91,6 +91,14 @@ class SpotifySettings(_EnvSettings):
         return _split_csv(v)
 
 
+class LastFmSettings(_EnvSettings):
+    """Optional: artist genres from Last.fm tags (Spotify returns none to development-mode apps)."""
+
+    model_config = SettingsConfigDict(env_prefix="LASTFM_")
+
+    api_key: SecretStr | None = None  # an API key only: no shared secret, no user login needed
+
+
 class GoogleSettings(_EnvSettings):
     model_config = SettingsConfigDict(env_prefix="GOOGLE_")
 
@@ -170,6 +178,7 @@ class Settings(BaseModel):
     openai: OpenAISettings
     telegram: TelegramSettings
     spotify: SpotifySettings
+    lastfm: LastFmSettings = Field(default_factory=LastFmSettings)
     google: GoogleSettings
     garmin: GarminSettings
     intervals_icu: IntervalsIcuSettings
@@ -183,6 +192,7 @@ def load_settings() -> Settings:
         openai=OpenAISettings(),
         telegram=TelegramSettings(),
         spotify=SpotifySettings(),
+        lastfm=LastFmSettings(),
         google=GoogleSettings(),
         garmin=GarminSettings(),
         intervals_icu=IntervalsIcuSettings(),

@@ -8,6 +8,7 @@ testable offline and resilient to an API breaking (e.g. Garmin's login change in
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from datetime import datetime, time
 from enum import StrEnum
 from typing import Protocol
@@ -21,7 +22,9 @@ from stridedj.domain import (
     AudioFeatures,
     CadenceTarget,
     DurationEstimate,
+    Genre,
     Mood,
+    MusicChoice,
     PlaylistDraft,
     RacePrediction,
     RunningProfile,
@@ -99,11 +102,45 @@ class AudioFeaturesPort(Protocol):
     async def recommendations(self, seed_track_ids: Sequence[TrackId], *, limit: int) -> Sequence[TrackId]: ...
 
 
+class ArtistGenresPort(Protocol):
+    """Genre tags of an artist (Last.fm live; Spotify's own field is empty for development-mode apps). Free-form or
+    `Genre` values: the planner maps them onto the closed `Genre` vocabulary."""
+
+    def cached(self, artist_id: ArtistId) -> Sequence[str] | None:
+        """The answer if it is known without a network call, else None."""
+        ...
+
+    async def artist_genres(self, artist_id: ArtistId, artist_name: str) -> Sequence[str]: ...
+
+
 class PlaylistWriterPort(Protocol):
     """The only Spotify write. Called by the executor after approval, never by the LLM."""
 
     async def create_private_playlist(self, *, name: str, description: str, track_ids: Sequence[TrackId]) -> str:
         """Create a private playlist and return its URL."""
+        ...
+
+
+class PlaylistHistoryPort(Protocol):
+    """The playlists StrideDJ created and the runner's feedback (ids only): written by the executor and the bot's
+    buttons, read by the planner (rotation, likes and dislikes)."""
+
+    def record_created(self, draft: PlaylistDraft) -> None: ...
+
+    def recent_track_uses(self, *, last_playlists: int) -> Mapping[TrackId, int]:
+        """In how many of the last `last_playlists` created playlists each track was."""
+        ...
+
+    def track_ids(self, draft_id: str) -> Sequence[TrackId]: ...
+
+    def rate_playlist(self, draft_id: str, rating: int) -> bool: ...
+
+    def toggle_song_dislike(self, track_id: str) -> bool: ...
+
+    def disliked_songs(self) -> AbstractSet[TrackId]: ...
+
+    def track_ratings(self, *, favourites: AbstractSet[TrackId]) -> Mapping[TrackId, int]:
+        """+1 / -1 per track; playlist ratings skip `favourites`, song dislikes always apply."""
         ...
 
 
@@ -158,11 +195,23 @@ class SlotFinder(Protocol):
 
 class PlaylistPlanner(Protocol):
     async def draft(
-        self, *, run_type: RunType, cadence: CadenceTarget, duration_min: float, mood: Mood
+        self,
+        *,
+        run_type: RunType,
+        cadence: CadenceTarget,
+        duration_min: float,
+        mood: Mood,
+        music: MusicChoice = MusicChoice.USUAL,
+        genre: Genre | None = None,
     ) -> PlaylistDraft:
-        """Plan (not create) a playlist of at least `duration_min` minutes matched to the cadence target."""
+        """Plan (not create) a playlist of at least `duration_min` minutes matched to the cadence target; with a
+        `genre`, only songs of that genre."""
         ...
 
     async def tracks_for(self, draft: PlaylistDraft) -> Sequence[Track]:
         """The tracks of a draft, for code-rendered display to the user (titles are never shown to the LLM)."""
+        ...
+
+    async def tracks_of(self, track_ids: Sequence[TrackId]) -> Sequence[Track]:
+        """Tracks by id in that order (unknown ids skipped), for code-rendered display (e.g. rating songs)."""
         ...

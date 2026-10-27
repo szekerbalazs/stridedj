@@ -23,6 +23,38 @@ class Mood(StrEnum):
     CALMER = "calmer"
 
 
+class MusicChoice(StrEnum):
+    """Where the songs come from (a closed set: the runner's wording is mapped to one of these, never passed on)."""
+
+    USUAL = "usual"  # the running music plus fitting songs from the library; recommendations only to fill gaps
+    FAMILIAR = "familiar"  # only the running playlists and songs by their artists
+    DISCOVER = "discover"  # more new songs in the runner's style (recommendations from the start)
+
+
+class Genre(StrEnum):
+    """The closed genre vocabulary. Free-form tags (Last.fm tags are written by anyone) are mapped onto it in
+    `music/genres.py`; only these values reach the model, the tool schema and the playlist card."""
+
+    TECHNO = "techno"
+    HOUSE = "house"
+    EDM = "edm"
+    TRANCE = "trance"
+    DRUM_AND_BASS = "drum and bass"
+    DUBSTEP = "dubstep"
+    ELECTRONIC = "electronic"
+    HIP_HOP = "hip hop"
+    POP = "pop"
+    RNB = "r&b"
+    ROCK = "rock"
+    INDIE = "indie"
+    METAL = "metal"
+    PUNK = "punk"
+    LATIN = "latin"
+    FUNK_DISCO = "funk & disco"
+    REGGAE = "reggae"
+    COUNTRY = "country"
+
+
 class Track(Frozen):
     track_id: TrackId
     name: str  # UNTRUSTED
