@@ -124,7 +124,10 @@ async def test_a_named_busy_start_gets_the_nearest_free_starts_and_no_proposal()
     slots_out = json.loads(outputs[-1])
     assert slots_out["requested_status"] == "busy"
     before, after = slots_out["slots"]
-    assert before["end_local"] == "08:30"  # work starts 08:30: the latest start that still fits before it
+    # work starts 08:30: the latest quarter-hour start that still ends by then (the end depends on the slot length)
+    hours, minutes = map(int, before["end_local"].split(":"))
+    end_min, work_min = 60 * hours + minutes, 8 * 60 + 30
+    assert end_min <= work_min < end_min + 15  # starting a quarter-hour later would not fit
     assert after["start_local"] == "Mon 19 Oct 17:30"  # the first start after work
 
 

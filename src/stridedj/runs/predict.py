@@ -22,7 +22,8 @@ exp(type effect) the pace ratio to an easy run, 100·c the % time per metre of c
 
 Why p80: the calendar slot is a newsvendor problem. Overrunning (late for the next thing) costs about four times as
 much as an idle quarter-hour, so the cost-optimal slot is the 4/(4+1) = 80th percentile of the running time; on
-top come 10 minutes of buffer (getting out, stretching), rounded up to the 15-minute calendar grid.
+top come 5 minutes of buffer (getting out of the door), rounded up to 5 minutes. (Before: +10 min and a
+15-minute grid, i.e. up to 24 min of slack on a time that already covers 4 runs in 5: a 69-min p80 booked 90 min.)
 
 Everything here is pure: a function of (runs, now, config). `now` is a parameter, and every function only looks
 at runs that started strictly before it, which is what makes the rolling-origin backtest leakage-free.
@@ -116,12 +117,12 @@ class PredictorConfig(Frozen):
     quantile: float = Field(default=0.8, gt=0.5, lt=1)
 
     default_exponent: float = Field(default=RIEGEL_EXPONENT, gt=0)
-    buffer_min: float = Field(default=10.0, ge=0)
+    buffer_min: float = Field(default=5.0, ge=0)
 
 
 # ─────────────────────────────── helpers ───────────────────────────────
 def slot_minutes(p80_min: float, buffer_min: float) -> int:
-    """Calendar slot: p80 + buffer, rounded UP to the 15-minute grid (never below the p80)."""
+    """Calendar slot: p80 + buffer, rounded UP to a multiple of 5 minutes (never below the p80)."""
     granularity = SLOT_GRANULARITY_MIN
     return max(granularity, math.ceil((p80_min + buffer_min) / granularity - 1e-9) * granularity)
 
