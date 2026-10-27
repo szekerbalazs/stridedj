@@ -30,7 +30,7 @@ from pydantic import SecretStr
 from stridedj.config import SpotifySettings
 from stridedj.domain import ArtistId, Track, TrackId
 from stridedj.envfile import store_secret
-from stridedj.errors import AuthError, ConfigError, ExternalAPIError
+from stridedj.errors import AuthError, ConfigError, ExternalAPIError, RateLimitedError
 from stridedj.http import RetryPolicy, Sleep, request_with_retries
 from stridedj.music.cache import JsonCache, UtcClock
 from stridedj.music.spotify_auth import REFRESH_TOKEN_ENV_KEY, SERVICE, refresh_access_token
@@ -46,6 +46,7 @@ PLAYLIST_ITEMS_PER_REQUEST = 100
 ACCESS_TOKEN_SKEW_S = 60.0  # refresh a minute early: a token that expires mid-request costs a 401 round trip
 ARTIST_GENRES_TTL_S = 30 * 24 * 3600.0
 TRACK_TTL_S = 30 * 24 * 3600.0
+BLOCKED_KEY = "spotify:blocked_until"  # + ":<client id>": rate limits are per app; survives restarts
 MAX_PLAYLIST_NAME_CHARS = 100
 MAX_PLAYLIST_DESCRIPTION_CHARS = 300
 
@@ -296,8 +297,13 @@ class SpotifyClient:
     async def _api(
         self, method: str, path_or_url: str, *, params: Mapping[str, Any] | None = None, json: Any = None
     ) -> httpx.Response:
-        """One authorised request. A 401 (token revoked or expired early) triggers one forced refresh and a retry."""
+        """One authorised request. A 401 (token revoked or expired early) triggers one forced refresh and a retry.
+
+        Circuit breaker: after a 429 with a long Retry-After, every call fails fast without touching the network
+        until that time has passed (in dev mode, calling a blocked app again can extend the block).
+        """
         url = _api_url(path_or_url)
+        self._raise_if_blocked(method)
         for attempt in range(2):
             token = await self._access_token(force=attempt > 0)
             try:
@@ -312,10 +318,31 @@ class SpotifyClient:
                     params=params,
                     json=json,
                 )
+            except RateLimitedError as exc:
+                self._block(exc.retry_after_s)
+                raise
             except AuthError as exc:
                 if exc.status_code != 401 or attempt > 0:
                     raise
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _block(self, retry_after_s: float | None) -> None:
+        if self._cache is None or retry_after_s is None or retry_after_s <= 0:
+            return
+        until = self._clock.now() + timedelta(seconds=retry_after_s)
+        self._cache.set(f"{BLOCKED_KEY}:{self._client_id}", until.isoformat(), ttl_s=retry_after_s)
+        logger.warning("spotify: rate limited until %s UTC; not calling Spotify until then", f"{until:%a %H:%M}")
+
+    def _raise_if_blocked(self, method: str) -> None:
+        raw = self._cache.get(f"{BLOCKED_KEY}:{self._client_id}") if self._cache else None
+        if not isinstance(raw, str):
+            return
+        until = datetime.fromisoformat(raw)
+        remaining_s = (until - self._clock.now()).total_seconds()
+        if remaining_s > 0:
+            raise RateLimitedError(
+                SERVICE, f"{method}: rate limited until {until:%a %H:%M} UTC (not called)", retry_after_s=remaining_s
+            )
 
     async def _get_json(self, path_or_url: str, *, params: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
         payload = (await self._api("GET", path_or_url, params=params)).json()

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from stridedj.errors import AuthError, ExternalAPIError
+from stridedj.errors import AuthError, ExternalAPIError, RateLimitedError
 from stridedj.http import RetryPolicy, backoff_delay, request_with_retries, retry_after_seconds
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -47,6 +47,16 @@ async def test_honours_retry_after_seconds() -> None:
     rec = Recorder()
     await request_with_retries(client, "GET", "/x", service="svc", sleep=rec.sleep)
     assert rec.sleeps == [7.0]
+
+
+async def test_a_long_retry_after_stops_at_once_instead_of_retrying_early() -> None:
+    """A Retry-After of many hours: retrying after 20 s would only hit a blocked API."""
+    client, seen = _client([httpx.Response(429, headers={"Retry-After": "60000"}), httpx.Response(200)])
+    rec = Recorder()
+    with pytest.raises(RateLimitedError) as info:
+        await request_with_retries(client, "GET", "/x", service="svc", sleep=rec.sleep)
+    assert info.value.retry_after_s == 60000
+    assert len(seen) == 1 and rec.sleeps == []
 
 
 async def test_does_not_retry_400_and_raises() -> None:

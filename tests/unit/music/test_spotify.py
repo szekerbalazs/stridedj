@@ -12,7 +12,7 @@ from pydantic import SecretStr
 
 from stridedj.config import SpotifySettings
 from stridedj.domain import ArtistId, TrackId
-from stridedj.errors import ConfigError, ExternalAPIError
+from stridedj.errors import ConfigError, ExternalAPIError, RateLimitedError
 from stridedj.music.cache import JsonCache
 from stridedj.music.spotify import (
     API_BASE_URL,
@@ -256,6 +256,34 @@ async def test_artist_genres_are_memoised_and_cached(tmp_path: Path) -> None:
     assert len(api.api_requests()) == 1
     assert await api.client(cache=cache).artist_genres(artist) == ("drum and bass", "jungle")  # new process
     assert len(api.api_requests()) == 1
+
+
+async def test_a_long_rate_limit_opens_the_circuit_until_it_has_passed(tmp_path: Path, clock: FrozenClock) -> None:
+    api = FakeSpotify()
+    blocked = {"on": True}
+    api.route(
+        "GET",
+        "/me/player/recently-played",
+        lambda _: (
+            httpx.Response(429, headers={"Retry-After": "3600"})
+            if blocked["on"]
+            else httpx.Response(200, json={"items": []})
+        ),
+    )
+    cache = JsonCache(tmp_path / "cache.db")
+    with pytest.raises(RateLimitedError):
+        await api.client(cache=cache, clock=clock).recently_played()
+    assert len(api.api_requests()) == 1
+
+    blocked["on"] = False
+    clock.advance(minutes=30)
+    with pytest.raises(RateLimitedError, match="not called"):  # a new process too: the block is in the cache
+        await api.client(cache=cache, clock=clock).recently_played()
+    assert len(api.api_requests()) == 1  # failed fast, Spotify was not called
+
+    clock.advance(minutes=31)
+    assert await api.client(cache=cache, clock=clock).recently_played() == []
+    assert len(api.api_requests()) == 2
 
 
 async def test_track_lookup_is_per_item_and_skips_unknown(tmp_path: Path) -> None:

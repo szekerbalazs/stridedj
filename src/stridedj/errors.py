@@ -25,6 +25,15 @@ class ExternalAPIError(StrideDJError):
         self.retryable = retryable
 
 
+class RateLimitedError(ExternalAPIError):
+    """HTTP 429. `retry_after_s` is the server's wait (None if not given); when it is longer than we would ever
+    sleep, the caller must stop calling until it has passed (Spotify can block a development-mode app for hours)."""
+
+    def __init__(self, service: str, message: str, *, retry_after_s: float | None) -> None:
+        super().__init__(service, message, status_code=429, retryable=True)
+        self.retry_after_s = retry_after_s
+
+
 class AuthError(ExternalAPIError):
     """Credentials are missing, expired or revoked: re-run `stridedj auth <service>`."""
 

@@ -3,7 +3,8 @@
 Retry policy (the standard one for third-party APIs):
 * retry only what can succeed on a second try: connection errors/timeouts, HTTP 429 and 5xx;
 * never retry other 4xx (a bad request stays bad; 401/403 means re-authenticate);
-* honour `Retry-After` (seconds or an HTTP date) when the server sends it, capped at `max_delay_s`;
+* honour `Retry-After` (seconds or an HTTP date) when the server sends it; a wait longer than `max_delay_s` is not
+  slept through or shortened: it raises `RateLimitedError` at once, because retrying early only prolongs a block;
 * otherwise exponential backoff with full jitter: sleep ~ U(0, base · 2^attempt), which spreads out retrying clients;
 * only retry idempotent requests by default (GET/PUT/DELETE/HEAD/OPTIONS); a POST is retried only when the caller
   says it is safe (e.g. it carries an idempotency key or a client-chosen id).
@@ -21,7 +22,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from stridedj.errors import AuthError, ExternalAPIError
+from stridedj.errors import AuthError, ExternalAPIError, RateLimitedError
 
 IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
@@ -113,10 +114,11 @@ async def request_with_retries(
             status = 429
         if status in (401, 403):
             raise AuthError(service, f"{method} {path}: not authorised", status_code=status)
+        hinted = retry_after_seconds(response.headers)
+        if status == 429 and (last or not may_retry or (hinted is not None and hinted > policy.max_delay_s)):
+            raise RateLimitedError(service, f"{method} {path}: rate limited", retry_after_s=hinted)
         if status in RETRYABLE_STATUS and may_retry and not last:
-            hinted = retry_after_seconds(response.headers)
-            delay = min(hinted, policy.max_delay_s) if hinted is not None else backoff_delay(attempt, policy)
-            await sleep(delay)
+            await sleep(hinted if hinted is not None else backoff_delay(attempt, policy))
             continue
         raise ExternalAPIError(
             service, f"{method} {path} failed", status_code=status, retryable=status in RETRYABLE_STATUS
