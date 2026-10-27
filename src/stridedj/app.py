@@ -63,6 +63,8 @@ class App:
     timezone: str
     refresh_music: Callable[[], Awaitable[int]] | None = field(default=None, kw_only=True)
     """Background job: pull the latest Spotify plays into the log and warm the genre cache (None = nothing to do)."""
+    refresh_runs: Callable[[], Awaitable[int]] | None = field(default=None, kw_only=True)
+    """Background job: pull new runs (and their per-second series) from the run source (None = nothing to do)."""
     history: PlaylistHistoryPort | None = field(default=None, kw_only=True)
     """Created playlists and the runner's feedback (the bot's 👍/👎 buttons write here)."""
 
@@ -191,5 +193,6 @@ async def build_live_app(settings: Settings, llm: LLMClient, *, usage_sink: Usag
         clock=clock,
         timezone=settings.athlete.timezone,
         refresh_music=music.planner.refresh,
+        refresh_runs=insights.refresh,
         history=music.history,
     )

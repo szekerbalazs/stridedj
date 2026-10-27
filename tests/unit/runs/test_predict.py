@@ -68,7 +68,9 @@ def test_regression_for_a_half_marathon_distance_not_run_recently(predictor: Dur
     assert estimate.n_runs_used == predictor.model.n_recent
     assert 1.0 < predictor.model.exponent < 1.2
     assert 115.0 <= estimate.p50_min <= 145.0  # ~5:30–6:50/km
-    assert estimate.note.startswith("No z2 run of 15.8–26.4 km in the last 90 days → extrapolated")
+    low, high = predictor.model.distance_range_km[RunType.Z2]
+    verb = "interpolated" if low <= 21.1 <= high else "extrapolated"  # older long runs count as fitted distances
+    assert estimate.note.startswith(f"No z2 run of 15.8–26.4 km in the last 90 days → {verb}")
 
 
 @pytest.mark.parametrize("estimator", ESTIMATORS)
@@ -97,6 +99,19 @@ def test_fitness_trend_option_adds_an_age_feature(demo_runs: list[ClassifiedRun]
     assert model is not None
     assert "age_days" in model.feature_names
     assert model.coefficients()["age_days"] > 0  # older runs were slower: the athlete got fitter
+
+
+def test_the_note_says_interpolated_inside_the_fitted_distances() -> None:
+    """Older Z2 runs of 5-15 km (none in the last 90 days): 10 km lies inside them, 25 km does not."""
+    runs = [
+        run(f"h{i}", days_ago=100 + 6 * i, km=km, minutes=6.0 * km * (1 + 0.02 * (i % 3)))
+        for i, km in enumerate([5, 7, 9, 11, 13, 15, 6, 8, 12, 14])
+    ]
+    inside = DurationPredictor(runs, now=NOW).estimate(RunType.Z2, 10.0)
+    outside = DurationPredictor(runs, now=NOW).estimate(RunType.Z2, 25.0)
+    assert inside.method is outside.method is EstimateMethod.REGRESSION
+    assert "→ interpolated with the personal model" in inside.note
+    assert "→ extrapolated with the personal model" in outside.note
 
 
 def test_a_few_identical_runs_still_get_the_personal_spread() -> None:

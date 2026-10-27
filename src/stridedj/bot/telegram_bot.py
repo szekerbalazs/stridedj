@@ -9,9 +9,9 @@ Buttons carry only a random approval token (`a:<token>` / `c:<token>`, under Tel
 session id (`x:i2`: a tap becomes a code-made message to the agent), or, under a created playlist, a draft id and a
 song position for feedback (`bot/feedback.py`).
 
-In the background, every 30 minutes, the latest Spotify plays are pulled into the plays log (Spotify only remembers
-the last 50, and the music played during a run is the strongest signal of what the runner runs to) and the artist
-genre cache is warmed.
+In the background, every 30 minutes: the latest Spotify plays are pulled into the plays log (Spotify only remembers
+the last 50, and the music played during a run is the strongest signal of what the runner runs to), the artist
+genre cache is warmed, and new runs are pulled from Garmin (before, only at start-up).
 """
 
 from __future__ import annotations
@@ -50,6 +50,7 @@ log = logging.getLogger(__name__)
 
 _SESSION_ID = re.compile(r"^i\d{1,3}$")  # interval session ids are code-made: i1, i2, ...
 PLAYS_SYNC_EVERY_S = 30 * 60  # 50 plays ≈ 3 hours of listening: every 30 min loses nothing
+RUNS_REFRESH_EVERY_S = 30 * 60  # a finished run is known within half an hour (one Garmin list call per round)
 
 WELCOME = (
     "Hi! I'm StrideDJ. Tell me what you want to run, e.g. <i>10k Z2 tonight</i> or "
@@ -71,7 +72,7 @@ class TelegramBot:
         self._app_factory = app_factory
         self._costs_summary = costs_summary
         self._stride: App | None = None
-        self._sync_task: asyncio.Task[None] | None = None
+        self._background: list[asyncio.Task[None]] = []
         # The agent is built inside PTB's own event loop (post_init), so its async clients belong to that loop.
         self._app = (
             Application.builder().token(token).post_init(self._post_init).post_shutdown(self._post_shutdown).build()
@@ -84,13 +85,19 @@ class TelegramBot:
 
     async def _post_init(self, _: Application[Any, Any, Any, Any, Any, Any]) -> None:
         self._stride = await self._app_factory()
-        if self._stride.refresh_music is not None:
-            self._sync_task = asyncio.create_task(sync_forever(self._stride.refresh_music, every_s=PLAYS_SYNC_EVERY_S))
+        jobs = [(self._stride.refresh_music, PLAYS_SYNC_EVERY_S, 0.0)]
+        # runs were refreshed while the app was built: their first background round comes one period later
+        jobs.append((self._stride.refresh_runs, RUNS_REFRESH_EVERY_S, RUNS_REFRESH_EVERY_S))
+        for job, every_s, first_after_s in jobs:
+            if job is not None:
+                self._background.append(
+                    asyncio.create_task(sync_forever(job, every_s=every_s, first_after_s=first_after_s))
+                )
         log.info("StrideDJ ready (timezone %s)", self._stride.timezone)
 
     async def _post_shutdown(self, _: Application[Any, Any, Any, Any, Any, Any]) -> None:
-        if self._sync_task is not None:
-            self._sync_task.cancel()
+        for task in self._background:
+            task.cancel()
 
     @property
     def _s(self) -> App:
@@ -286,13 +293,15 @@ class TelegramBot:
             )
 
 
-async def sync_forever(sync: Callable[[], Awaitable[int]], *, every_s: float) -> None:
-    """Call `sync` now and then every `every_s` seconds until cancelled; a failed round is logged, never fatal."""
+async def sync_forever(sync: Callable[[], Awaitable[int]], *, every_s: float, first_after_s: float = 0.0) -> None:
+    """Call `sync` (after `first_after_s`) and then every `every_s` seconds until cancelled; a failed round is
+    logged, never fatal."""
+    await asyncio.sleep(first_after_s)
     while True:
         try:
             await sync()
         except Exception:
-            log.exception("background music refresh failed; retrying at the next round")
+            log.exception("background refresh failed; retrying at the next round")
         await asyncio.sleep(every_s)
 
 

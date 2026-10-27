@@ -40,6 +40,11 @@ class UserContext(Frozen):
 
 # ─────────────────────────────── the agent's final answer (strict structured output) ───────────────────────────────
 class ReplyKind(StrEnum):
+    """What the answer is. 'proposal': propose_plan created a plan in this turn (the app shows it with Approve/Cancel).
+    'clarification': something essential is missing, or the runner has to choose (e.g. an interval session).
+    'answer': a question about the runner's own running was answered. 'refusal': out of scope (medical advice,
+    other people's data, doing anything directly). 'error': a tool or service failed; say so briefly, no details."""
+
     PROPOSAL = "proposal"  # a plan was proposed via propose_plan; the bot shows Approve/Cancel
     CLARIFICATION = "clarification"  # something essential is missing or ambiguous
     ANSWER = "answer"  # a question about past runs/predictions was answered
@@ -48,6 +53,8 @@ class ReplyKind(StrEnum):
 
 
 class MissingField(StrEnum):
+    """What a clarification asks for."""
+
     DISTANCE = "distance"
     RUN_TYPE = "run_type"
     DATE = "date"

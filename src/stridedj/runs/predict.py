@@ -190,6 +190,7 @@ class PersonalModel:
     scale: NDArray[np.float64] = field(repr=False)
     p50_model: Any = field(repr=False)
     p80_model: Any = field(default=None, repr=False)  # only for estimator="quantile"
+    distance_range_km: Mapping[RunType, tuple[float, float]] = field(default_factory=dict)  # per type, in the fit
 
     def supports(self, run_type: RunType) -> bool:
         return run_type in self.run_types
@@ -341,6 +342,13 @@ def fit_personal_model(
         scale=scale,
         p50_model=p50_model,
         p80_model=p80_model,
+        distance_range_km={
+            t: (
+                min(r.distance_km for r in rows if r.run_type is t),
+                max(r.distance_km for r in rows if r.run_type is t),
+            )
+            for t in run_types
+        },
     )
 
 
@@ -461,9 +469,11 @@ class DurationPredictor:
         lo, hi = self._similar_range(distance_km)
         count = "No" if n_similar == 0 else f"Only {n_similar}"
         runs_word = "run" if n_similar <= 1 else "runs"
+        low, high = model.distance_range_km.get(run_type, (math.inf, -math.inf))
+        verb = "interpolated" if low <= distance_km <= high else "extrapolated"  # inside the fitted distances or not
         note = (
             f"{count} {run_type.value} {runs_word} of {_fmt_km(lo)}–{_fmt_km(hi)} km in the last "
-            f"{self._config.recent_window_days} days → extrapolated with the personal model fit on "
+            f"{self._config.recent_window_days} days → {verb} with the personal model fit on "
             f"{model.n_recent} runs from the last {self._config.regression_window_days} days "
             f"(exponent {model.exponent:.2f}, {model.estimator})."
         )

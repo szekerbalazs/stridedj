@@ -70,3 +70,20 @@ async def test_background_sync_survives_a_failing_round() -> None:
     task = asyncio.create_task(sync_forever(sync, every_s=0))
     await asyncio.wait_for(third_round.wait(), timeout=2)
     task.cancel()
+
+
+async def test_a_delayed_background_job_waits_for_its_first_round() -> None:
+    """Runs were refreshed at start-up, so their background job starts one period later."""
+    calls = 0
+
+    async def refresh() -> int:
+        nonlocal calls
+        calls += 1
+        return 0
+
+    task = asyncio.create_task(sync_forever(refresh, every_s=3600, first_after_s=0.2))
+    await asyncio.sleep(0.05)
+    assert calls == 0
+    await asyncio.sleep(0.3)
+    task.cancel()
+    assert calls == 1

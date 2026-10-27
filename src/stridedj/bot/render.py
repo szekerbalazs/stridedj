@@ -33,7 +33,7 @@ def render_proposal(plan: RunPlan, tracks: Sequence[Track], tz: ZoneInfo, *, ric
     lines = [
         _b(f"🏃 {plan.distance_km:g} km {RUN_TYPE_LABEL[plan.run_type]} run", rich),
         f"📅 {start:%a %d %b}, {start:%H:%M}–{end:%H:%M}",
-        f"⏱ ~{d.p50_min:.0f} min expected (80%: {d.p80_min:.0f} min)",
+        f"⏱ ~{d.p50_min:.0f} min typical, ≤ {d.p80_min:.0f} min in 4 of 5 runs",
         f"   {_esc(d.note, rich)}",
         f"👟 cadence target {plan.cadence.spm:.0f} spm"
         + (f" ({plan.cadence.n_runs} recent runs)" if plan.cadence.n_runs else ""),

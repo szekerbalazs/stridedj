@@ -38,7 +38,7 @@ def event_title(plan: RunPlan) -> str:
 def event_description(plan: RunPlan, playlist_url: str | None) -> str:
     lines = [
         "Planned by StrideDJ.",
-        f"Expected running time: ~{plan.duration.p50_min:.0f} min (80% within {plan.duration.p80_min:.0f} min).",
+        f"Running time: ~{plan.duration.p50_min:.0f} min typical, ≤ {plan.duration.p80_min:.0f} min in 4 of 5 runs.",
         f"Cadence target: {plan.cadence.spm:.0f} steps/min.",
     ]
     if plan.session is not None:
