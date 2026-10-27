@@ -21,9 +21,9 @@
 
 - id: c04-intervals-with-distance
   suite: capability
-  description: Intervals with a total distance.
-  turns: ["Interval session tomorrow evening, 9 km in total"]
-  expect: {kind: proposal, run_type: intervals, distance_km: 9, date: tomorrow, day_part: evening}
+  description: 'Intervals with a total but no reps: sessions sized to 9 km are offered; the picked one keeps the total.'
+  turns: ["Interval session tomorrow evening, 9 km in total", "I choose interval session i2: 6 × 800 m @ 4:10, 90 s rest, 9 km in total."]
+  expect: {kind: proposal, run_type: intervals, distance_km: 9, date: tomorrow, day_part: evening, session_id: i2}
 
 - id: c05-intervals-no-distance
   suite: capability

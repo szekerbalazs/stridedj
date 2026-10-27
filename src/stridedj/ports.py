@@ -193,8 +193,11 @@ class RunInsights(Protocol):
 
     def race_predictions(self, *, now: datetime) -> Sequence[RacePrediction]: ...
 
-    def interval_options(self, *, now: datetime, max_minutes: int | None = None) -> Sequence[IntervalSession]:
-        """2-3 interval sessions (distance reps, standing rests) at the runner's current target paces."""
+    def interval_options(
+        self, *, now: datetime, max_minutes: int | None = None, total_km: float | None = None
+    ) -> Sequence[IntervalSession]:
+        """2-3 interval sessions (distance reps, standing rests) at the runner's current target paces; with
+        `total_km`, warm-up and cool-down are sized so each session has that total."""
         ...
 
 

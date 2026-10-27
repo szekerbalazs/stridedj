@@ -83,6 +83,9 @@ class SuggestSessionsArgs(Frozen):
     max_minutes: int | None = Field(
         default=None, description="the runner's time limit for the whole session in minutes, or null if none"
     )
+    total_km: float | None = Field(
+        default=None, description="the total distance the runner asked for in km (e.g. '9 km in total'), or null"
+    )
 
     @field_validator("max_minutes")
     @classmethod
@@ -320,9 +323,9 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
         return picked.duration if picked is not None else estimate(args.run_type, args.distance_km)
 
     async def suggest_interval_sessions(args: SuggestSessionsArgs) -> SessionOptionsOut:
-        built = deps.insights.interval_options(now=now(), max_minutes=args.max_minutes)
+        built = deps.insights.interval_options(now=now(), max_minutes=args.max_minutes, total_km=args.total_km)
         if not built:
-            raise ToolError(f"no interval session fits in {args.max_minutes} minutes; tell the runner")
+            raise ToolError("no interval session fits the runner's time limit or total distance; tell the runner")
         out: list[SessionOptionOut] = []
         for option in built:
             session_id = f"i{len(state.sessions) + 1}"

@@ -90,3 +90,19 @@ def test_a_time_limit_shrinks_the_rep_count_or_drops_the_option() -> None:
 
 def test_planned_rest_by_rep_distance() -> None:
     assert [rest_after(d) for d in (200, 400, 600, 800, 1000, 1600)] == [75, 75, 90, 90, 120, 120]
+
+
+def test_sessions_sized_to_a_requested_total() -> None:
+    """'9 km in total': the reps stay, warm-up and cool-down (60/40) fill the rest."""
+    short, medium, pyramid = _options(total_km=9.0)
+    assert [o.total_km for o in (short, medium, pyramid)] == [9.0, 9.0, 9.0]
+    assert (short.warmup_km, short.cooldown_km) == (3.5, 2.3)  # 9 - 3.2 = 5.8 km easy
+    assert (medium.warmup_km, medium.cooldown_km) == (2.5, 1.7)  # 9 - 4.8 = 4.2 km easy
+    assert short.duration.distance_km == 9.0
+
+
+def test_a_short_total_means_fewer_reps_or_no_option() -> None:
+    options = {o.kind: o for o in _options(total_km=5.0)}  # 5 km: 8 × 400 leaves 1.8 km easy, 6 × 800 only 0.2
+    assert options["short"].reps_m == (400,) * 8
+    assert options["medium"].reps_m == (800,) * 4  # 3.2 km of reps leaves 1.8 km
+    assert "pyramid" not in options  # 3.6 km of reps leaves 1.4 km < 1.5

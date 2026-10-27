@@ -106,7 +106,8 @@ def reference_policy(task: Task, timezone: str = "Europe/Zurich") -> Policy:
         )
         if offer_now:  # an interval run without reps: offer sessions (as buttons) and ask which one
             if SESSIONS_TOOL not in done:
-                return ScriptedTurn(tool_calls=[(SESSIONS_TOOL, {"max_minutes": None})])
+                total = e.distance_km if "km" in task.turns[0] else None  # only if the runner named a total
+                return ScriptedTurn(tool_calls=[(SESSIONS_TOOL, {"max_minutes": None, "total_km": total})])
             return _final(ReplyKind.CLARIFICATION, "Which session would you like?")
         if kind is ReplyKind.CLARIFICATION:
             return _final(kind, "How far would you like to run?", missing=list(e.missing_fields))

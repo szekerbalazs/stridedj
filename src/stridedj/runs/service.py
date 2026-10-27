@@ -216,7 +216,9 @@ class RunInsightsService:
         fallback = {d: round_to_5(easy * ratio) for d, ratio in FALLBACK_TARGET_RATIOS.items()}
         return fallback, [], "no interval history yet: estimated from your easy pace"
 
-    def interval_options(self, *, now: datetime, max_minutes: int | None = None) -> list[IntervalSession]:
+    def interval_options(
+        self, *, now: datetime, max_minutes: int | None = None, total_km: float | None = None
+    ) -> list[IntervalSession]:
         """2-3 interval sessions (short reps, medium reps, a pyramid) at the runner's target paces."""
         targets, _, _ = self.interval_targets(now=now)
         sessions = self.interval_sessions(now=now)
@@ -257,6 +259,7 @@ class RunInsightsService:
             measured_rest_s=measured_rest,
             typical_reps={d: round(statistics.median(n)) for d, n in typical.items() if d in (400, 800)},
             max_minutes=max_minutes,
+            total_km=total_km,
         )
 
     def race_predictions(self, *, now: datetime) -> Sequence[RacePrediction]:

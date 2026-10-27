@@ -30,6 +30,8 @@ SHORT_REP_M, MEDIUM_REP_M = 400, 800
 DEFAULT_REPS: Mapping[int, int] = {SHORT_REP_M: 8, MEDIUM_REP_M: 6}
 PYRAMID_M: tuple[int, ...] = (400, 800, 1200, 800, 400)
 MIN_REPS = 3
+MIN_EASY_KM = 1.5  # warm-up + cool-down at least, when sized to a total
+WARMUP_SHARE = 0.6  # of the easy distance, when sized to a total
 
 
 def interval_session_distance(
@@ -71,21 +73,32 @@ def build_session_options(
     warmup_km: float = DEFAULT_WARMUP_KM,
     cooldown_km: float = DEFAULT_COOLDOWN_KM,
     max_minutes: int | None = None,
+    total_km: float | None = None,
 ) -> list[IntervalSession]:
     """Short reps, medium reps and a pyramid. With `max_minutes`, rep counts shrink (to ≥ 3) until the slot fits;
     options that still don't fit are left out. The label shows the planned rest; the duration uses the rest the runner
-    actually takes (`measured_rest_s`: usually longer than planned)."""
+    actually takes (`measured_rest_s`: usually longer than planned).
+
+    With `total_km` ("9 km in total"), each option keeps its reps and the rest of the distance becomes warm-up and
+    cool-down (60/40); an option whose reps leave less than 1.5 km for them gets fewer reps (≥ 3) or is left out."""
     reps_of = {**DEFAULT_REPS, **(typical_reps or {})}
 
-    def make(kind: str, reps: tuple[int, ...]) -> IntervalSession:
+    def make(kind: str, reps: tuple[int, ...]) -> IntervalSession | None:
+        warm, cool = warmup_km, cooldown_km
+        if total_km is not None:
+            easy_km = total_km - sum(reps) / 1000
+            if easy_km < MIN_EASY_KM - 1e-9:
+                return None
+            warm = round(easy_km * WARMUP_SHARE, 1)
+            cool = round(easy_km - warm, 1)
         paces = tuple(round(pace_of(r), 1) for r in reps)
         rests = tuple(rest_after(r) for r in reps[:-1])
         work_s = sum(r / 1000 * p for r, p in zip(reps, paces, strict=True))
-        easy_s = (warmup_km + cooldown_km) * easy_pace_s_per_km
+        easy_s = (warm + cool) * easy_pace_s_per_km
         rests_s = sum(measured_rest_s(r) for r in reps[:-1])
         p50_min = (easy_s + work_s + rests_s + overhead_s) / 60
         p80_min = p50_min * spread
-        total_km = round(warmup_km + sum(reps) / 1000 + cooldown_km, 2)
+        total = round(warm + sum(reps) / 1000 + cool, 2)
         note = (
             f"From the session's structure: warm-up and cool-down at your easy pace ({format_pace(easy_pace_s_per_km)}"
             f"/km), reps at target pace, your usual standing rests, + {overhead_s / 60:.0f} min of usual extra time "
@@ -93,7 +106,7 @@ def build_session_options(
         )
         duration = DurationEstimate(
             run_type=RunType.INTERVALS,
-            distance_km=total_km,
+            distance_km=total,
             method=EstimateMethod.SESSION,
             n_runs_used=n_history,
             p50_min=round(p50_min, 1),
@@ -107,16 +120,16 @@ def build_session_options(
             reps_m=reps,
             target_paces_s_per_km=paces,
             rest_s=rests,
-            warmup_km=warmup_km,
-            cooldown_km=cooldown_km,
-            total_km=total_km,
+            warmup_km=warm,
+            cooldown_km=cool,
+            total_km=total,
             duration=duration,
         )
 
     def fitted(kind: str, rep_m: int) -> IntervalSession | None:
         for n in range(reps_of[rep_m], MIN_REPS - 1, -1):
             option = make(kind, (rep_m,) * n)
-            if max_minutes is None or option.duration.slot_min <= max_minutes:
+            if option is not None and (max_minutes is None or option.duration.slot_min <= max_minutes):
                 return option
         return None
 

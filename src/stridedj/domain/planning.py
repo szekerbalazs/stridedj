@@ -135,7 +135,10 @@ class IntervalSession(Frozen):
         parts = []
         if self.warmup_km:
             parts.append(f"{self.warmup_km:g} km warm-up")
-        parts.append(f"{self.main_set} (standing rests)" if len(set(self.reps_m)) > 1 else self.main_set + " standing")
+        uniform = len(set(self.reps_m)) == 1
+        parts.append(
+            self.main_set.replace(" s rest", " s standing rest") if uniform else f"{self.main_set} (standing rests)"
+        )
         if self.cooldown_km:
             parts.append(f"{self.cooldown_km:g} km cool-down")
         return " · ".join(parts)
