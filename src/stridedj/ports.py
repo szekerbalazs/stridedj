@@ -18,6 +18,7 @@ from pydantic import SecretStr
 
 from stridedj.domain import (
     Activity,
+    ActivityId,
     ArtistId,
     AudioFeatures,
     CadenceTarget,
@@ -28,6 +29,7 @@ from stridedj.domain import (
     PlaylistDraft,
     RacePrediction,
     RunningProfile,
+    RunSeries,
     RunType,
     SlotRequest,
     StartCheck,
@@ -56,6 +58,12 @@ class RunSource(Protocol):
         ...
 
 
+class RunSeriesSource(Protocol):
+    """Per-sample series of a run (Garmin live). Optional: without it, interval runs are typed from laps only."""
+
+    async def fetch_series(self, activity_id: ActivityId) -> RunSeries | None: ...
+
+
 class RunRepository(Protocol):
     """Local persistence of activities (SQLite)."""
 
@@ -64,6 +72,12 @@ class RunRepository(Protocol):
         ...
 
     def list_activities(self, *, since: datetime | None = None) -> Sequence[Activity]: ...
+
+    def upsert_series(self, series: RunSeries) -> None: ...
+
+    def get_series(self, activity_id: ActivityId) -> RunSeries | None: ...
+
+    def series_ids(self) -> set[ActivityId]: ...
 
 
 # ─────────────────────────────── calendar ───────────────────────────────

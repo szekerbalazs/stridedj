@@ -8,12 +8,14 @@ Every answer is computed from the *store*, never from the live API, so the tools
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from stridedj.config import AthleteSettings
 from stridedj.domain import (
+    ActivityId,
     CadenceTarget,
     ClassifiedRun,
     DurationEstimate,
@@ -22,10 +24,11 @@ from stridedj.domain import (
     RunningProfile,
     RunType,
 )
-from stridedj.errors import ToolError
-from stridedj.ports import Clock, RunRepository, RunSource
+from stridedj.errors import StrideDJError, ToolError
+from stridedj.ports import Clock, RunRepository, RunSeriesSource, RunSource
 from stridedj.runs import analysis
 from stridedj.runs.analysis import DEFAULT_HR_ZONES
+from stridedj.runs.intervals import IntervalAnalysis, analyse_series
 from stridedj.runs.predict import DurationPredictor, PredictorConfig
 
 if TYPE_CHECKING:
@@ -38,6 +41,10 @@ if TYPE_CHECKING:
 INITIAL_HISTORY_DAYS = 400
 FETCH_LIMIT = 1000
 MAX_DISTANCE_KM = 100.0
+INTERVAL_CADENCE_LOOKBACK_DAYS = 365
+SERIES_PER_REFRESH = 10  # Garmin calls per refresh for per-sample series (one per new run)
+
+logger = logging.getLogger(__name__)
 
 
 class SystemClock:
@@ -76,8 +83,13 @@ class RunInsightsService:
         profile_lookback_days: int = 120,
         cadence_lookback_days: int = 120,
         cadence_last_n: int = 8,
+        series_source: RunSeriesSource | None = None,
+        series_per_refresh: int = SERIES_PER_REFRESH,
     ) -> None:
         self._source = source
+        self._series_source = series_source
+        self._series_per_refresh = series_per_refresh
+        self._intervals: dict[ActivityId, IntervalAnalysis | None] = {}  # series never change: analyse once
         self._repository = repository
         self._zones = zones
         self._config = config or PredictorConfig()
@@ -100,14 +112,39 @@ class RunInsightsService:
         known = {activity.activity_id for activity in stored}
         new = sum(activity.activity_id not in known for activity in fetched)
         self._repository.upsert_activities(fetched)
+        await self._fetch_missing_series()
         return new
+
+    async def _fetch_missing_series(self) -> None:
+        """Per-sample series for runs that have none yet, newest first (best effort, a few per refresh: the bulk of
+        an old history is loaded once with `stridedj series`)."""
+        if self._series_source is None:
+            return
+        have = self._repository.series_ids()
+        todo = [a.activity_id for a in self._repository.list_activities() if a.activity_id not in have]
+        for activity_id in todo[: self._series_per_refresh]:
+            try:
+                series = await self._series_source.fetch_series(activity_id)
+            except StrideDJError as exc:
+                logger.warning("run series unavailable, continuing without: %s", exc)
+                return
+            if series is not None:
+                self._repository.upsert_series(series)
+                self._intervals.pop(activity_id, None)
 
     # ── queries (all computed from the store) ──
     def classified_runs(self, *, now: datetime) -> list[ClassifiedRun]:
         """Stored runs within the model's history horizon that started before `now`, typed with the user's zones."""
         since = now - timedelta(days=self._config.history_days)
         activities = [a for a in self._repository.list_activities(since=since) if a.start < now]
-        return analysis.classify_all(activities, self._zones)
+        found = {a.activity_id: result for a in activities if (result := self._interval_analysis(a.activity_id))}
+        return analysis.classify_all(activities, self._zones, found)
+
+    def _interval_analysis(self, activity_id: ActivityId) -> IntervalAnalysis | None:
+        if activity_id not in self._intervals:
+            series = self._repository.get_series(activity_id)
+            self._intervals[activity_id] = analyse_series(series) if series is not None else None
+        return self._intervals[activity_id]
 
     def profile(self, run_type: RunType, *, now: datetime) -> RunningProfile:
         return analysis.running_profile(
@@ -122,12 +159,11 @@ class RunInsightsService:
         )
 
     def cadence_target(self, run_type: RunType, *, now: datetime) -> CadenceTarget:
+        lookback = self._cadence_lookback_days
+        if run_type is RunType.INTERVALS:  # sessions come in seasonal blocks: months can pass between two
+            lookback = max(lookback, INTERVAL_CADENCE_LOOKBACK_DAYS)
         return analysis.cadence_target(
-            self.classified_runs(now=now),
-            run_type,
-            now=now,
-            n_last=self._cadence_last_n,
-            lookback_days=self._cadence_lookback_days,
+            self.classified_runs(now=now), run_type, now=now, n_last=self._cadence_last_n, lookback_days=lookback
         )
 
     def race_predictions(self, *, now: datetime) -> Sequence[RacePrediction]:

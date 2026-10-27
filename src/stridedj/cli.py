@@ -205,6 +205,46 @@ def costs(
 
 
 @app.command()
+def series(
+    limit: Annotated[int, typer.Option(help="at most this many runs per call")] = 200,
+    pause_s: Annotated[float, typer.Option(help="seconds between Garmin calls (be polite: unofficial API)")] = 1.5,
+) -> None:
+    """Download the per-second series (pace, heart rate, cadence; no GPS) of runs that don't have one yet."""
+    from stridedj.errors import StrideDJError
+    from stridedj.runs.sources.garmin_live import GarminLiveSource
+    from stridedj.runs.store import SqliteRunRepository
+
+    settings = load_settings()
+    repository = SqliteRunRepository.from_settings(settings.app)
+    source = GarminLiveSource(settings.garmin)
+    have = repository.series_ids()
+    todo = [a for a in repository.list_activities() if a.activity_id not in have][:limit]
+    console.print(f"{len(have)} run(s) already have a series; fetching {len(todo)}.")
+
+    async def main() -> tuple[int, int]:
+        stored = missing = 0
+        for n, activity in enumerate(todo, start=1):
+            if n > 1:
+                await asyncio.sleep(pause_s)
+            try:
+                found = await source.fetch_series(activity.activity_id)
+            except StrideDJError as exc:
+                console.print(f"[red]Stopped at run {n}/{len(todo)}: {exc}[/] (run the command again later)")
+                break
+            if found is None:
+                missing += 1
+            else:
+                repository.upsert_series(found)
+                stored += 1
+            if n % 10 == 0 or n == len(todo):
+                console.print(f"  {n}/{len(todo)} done")
+        return stored, missing
+
+    stored, missing = asyncio.run(main())
+    console.print(f"Stored {stored} series; {missing} run(s) had none.")
+
+
+@app.command()
 def version() -> None:
     """Print the installed version."""
     from importlib.metadata import version as pkg_version

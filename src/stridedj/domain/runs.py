@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 from itertools import pairwise
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import AwareDatetime, Field, field_validator
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from stridedj.domain.base import ActivityId, Frozen
 
@@ -107,3 +107,47 @@ class ClassifiedRun(Frozen):
     activity: Activity
     run_type: RunType
     reason: str
+    work_cadence_spm: float | None = Field(default=None, gt=0, description="intervals: cadence of the reps only")
+
+    @property
+    def planning_duration_s(self) -> float:
+        """The time this run took as far as planning is concerned. Interval sessions: elapsed time, because the rests
+        (often with the watch stopped) are part of the workout and of the calendar slot. Other runs: moving time,
+        because a stop there is an interruption (a traffic light, a break), not part of the run."""
+        return self.activity.elapsed_s if self.run_type is RunType.INTERVALS else self.activity.duration_s
+
+
+class RunSeries(Frozen):
+    """The per-sample channels of one run, for interval detection. Stored locally, never shown to the LLM.
+
+    The fields ARE the allowlist: Garmin also sends latitude/longitude per sample, and there is nowhere to put them.
+    Two clocks, because runners stop the watch in breaks: `elapsed_s` is wall-clock time since the start (it jumps
+    over a pause; no samples exist while the watch is stopped), `timer_s` is the watch's timer (it does not).
+    Older recordings use "smart recording" (a sample every few seconds), so a gap between samples is NOT a pause:
+    a pause is `elapsed` growing while `timer` does not.
+    """
+
+    activity_id: ActivityId
+    elapsed_s: tuple[float, ...]
+    timer_s: tuple[float, ...]
+    distance_m: tuple[float, ...]
+    speed_mps: tuple[float | None, ...]
+    hr_bpm: tuple[float | None, ...]
+    cadence_spm: tuple[float | None, ...] = Field(description="steps per minute, both feet")
+
+    @field_validator("elapsed_s")
+    @classmethod
+    def _increasing(cls, v: tuple[float, ...]) -> tuple[float, ...]:
+        if len(v) < 2 or any(b < a for a, b in pairwise(v)):
+            raise ValueError("need ≥ 2 samples with non-decreasing elapsed time")
+        return v
+
+    @model_validator(mode="after")
+    def _aligned(self) -> Self:
+        n = len(self.elapsed_s)
+        if any(len(c) != n for c in (self.timer_s, self.distance_m, self.speed_mps, self.hr_bpm, self.cadence_spm)):
+            raise ValueError("all channels must have one value per sample")
+        return self
+
+    def __len__(self) -> int:
+        return len(self.elapsed_s)

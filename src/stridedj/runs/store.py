@@ -9,6 +9,9 @@ Design choices:
 * Laps and zone seconds are JSON columns: they are always read together with their activity and never queried.
 * Start times are stored as fixed-format UTC ISO-8601 strings, whose lexicographic order equals chronological order,
   so `ORDER BY` / `WHERE start_utc >= ?` work on the text column with an index.
+* Per-sample series (`RunSeries`, for interval detection) live in their own table as one zlib-compressed JSON blob
+  per run (~2-4 k samples × 6 channels ≈ 30 KB): always read whole, never queried. Again the schema is the allowlist:
+  the blob is built from the `RunSeries` fields, which have no GPS.
 * A new connection per operation: no connection is shared across threads (the bot runs tool calls in threads), and
   `with conn:` gives one transaction per upsert batch.
 """
@@ -18,12 +21,13 @@ from __future__ import annotations
 import contextlib
 import json
 import sqlite3
+import zlib
 from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 from stridedj.config import AppSettings
-from stridedj.domain import Activity, ActivityId, Lap
+from stridedj.domain import Activity, ActivityId, Lap, RunSeries
 
 DB_FILENAME = "stridedj.db"
 SCHEMA_VERSION = 1
@@ -44,6 +48,10 @@ CREATE TABLE IF NOT EXISTS activities (
     laps_json        TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_activities_start ON activities (start_utc);
+CREATE TABLE IF NOT EXISTS run_series (
+    activity_id TEXT PRIMARY KEY,
+    payload     BLOB NOT NULL  -- zlib(JSON of the RunSeries channels)
+);
 """
 
 _COLUMNS = (
@@ -164,6 +172,27 @@ class SqliteRunRepository:
                 cursor = conn.execute(f"{_SELECT} WHERE start_utc >= ? ORDER BY start_utc DESC", (_utc_text(since),))
             rows: list[Row] = cursor.fetchall()
         return [_from_row(row) for row in rows]
+
+    def upsert_series(self, series: RunSeries) -> None:
+        payload = zlib.compress(series.model_dump_json(exclude={"activity_id"}).encode(), level=6)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO run_series (activity_id, payload) VALUES (?, ?) "
+                "ON CONFLICT (activity_id) DO UPDATE SET payload = excluded.payload",
+                (series.activity_id, payload),
+            )
+
+    def get_series(self, activity_id: ActivityId) -> RunSeries | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT payload FROM run_series WHERE activity_id = ?", (activity_id,)).fetchone()
+        if row is None:
+            return None
+        channels = json.loads(zlib.decompress(row[0]))
+        return RunSeries.model_validate({"activity_id": activity_id, **channels})
+
+    def series_ids(self) -> set[ActivityId]:
+        with self._connect() as conn:
+            return {ActivityId(a) for (a,) in conn.execute("SELECT activity_id FROM run_series")}
 
     def count(self) -> int:
         with self._connect() as conn:

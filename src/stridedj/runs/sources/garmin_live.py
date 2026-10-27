@@ -24,6 +24,13 @@ typed models where available, otherwise from Garmin Connect web responses):
 * `get_activity_splits`: `{"lapDTOs": [{"startTimeGMT", "duration", "distance", "averageHR", "averageRunCadence",
   "intensityType"}]}` — verify `averageRunCadence` is steps/min (not strides/min) and the `intensityType` values
   (ACTIVE, REST, WARMUP, COOLDOWN, RECOVERY, INTERVAL).
+
+Per-sample series (`get_activity_details(id, maxchart, maxpoly=0)`), verified against the live API: `metricDescriptors`
+name the columns of `activityDetailMetrics[].metrics` (16 keys). Values are already in the named units: `directSpeed`
+m/s, `sumDistance` m, `sumDuration` (timer) and `sumElapsedDuration` s, `directHeartRate` bpm, `directDoubleCadence`
+steps/min (`directRunCadence` is one foot). `maxpoly=0` drops the route polyline, but every sample still carries
+`directLatitude`/`directLongitude`: they are never read. ~1 s per sample, or 3-8 s on older "smart recording" runs.
+While the watch is stopped there are no samples: the pause shows as elapsed growing without the timer.
 """
 
 from __future__ import annotations
@@ -44,7 +51,7 @@ from garminconnect import (
 )
 
 from stridedj.config import GarminSettings
-from stridedj.domain import Activity, ActivityId, HeartRateZones, Lap, LapIntensity
+from stridedj.domain import Activity, ActivityId, HeartRateZones, Lap, LapIntensity, RunSeries
 from stridedj.errors import AuthError, ConfigError, ExternalAPIError
 
 logger = logging.getLogger(__name__)
@@ -87,6 +94,8 @@ class GarminApi(Protocol):
     def get_activity_splits(self, activity_id: str) -> Any: ...
 
     def get_activity_hr_in_timezones(self, activity_id: str) -> Any: ...
+
+    def get_activity_details(self, activity_id: str, maxchart: int = ..., maxpoly: int = ...) -> Any: ...
 
     def get_heart_rate_zones(self) -> list[dict[str, Any]]: ...
 
@@ -229,6 +238,72 @@ def activity_from_garmin(summary: Mapping[str, Any], *, splits: Any = None, hr_z
     )
 
 
+# the only per-sample keys ever read (an allowlist: latitude/longitude are in the payload and stay unread)
+_SERIES_KEYS = {
+    "elapsed": "sumElapsedDuration",
+    "timer": "sumDuration",
+    "distance": "sumDistance",
+    "speed": "directSpeed",
+    "hr": "directHeartRate",
+    "cadence": "directDoubleCadence",
+    "cadence_one_foot": "directRunCadence",
+}
+SERIES_MAX_SAMPLES = 6000  # ≥ 1 per second for runs up to 100 min; longer runs are downsampled by Garmin
+
+
+def series_from_details(activity_id: ActivityId, details: Any) -> RunSeries | None:
+    """`get_activity_details` payload → `RunSeries` (allowlisted channels only), or None if unusable."""
+    if not isinstance(details, Mapping):
+        return None
+    index: dict[str, int] = {}
+    for descriptor in details.get("metricDescriptors") or ():
+        if isinstance(descriptor, Mapping) and descriptor.get("key") in _SERIES_KEYS.values():
+            position = descriptor.get("metricsIndex")
+            if isinstance(position, int) and not isinstance(position, bool) and position >= 0:
+                index[str(descriptor["key"])] = position
+    if not {_SERIES_KEYS["elapsed"], _SERIES_KEYS["timer"], _SERIES_KEYS["distance"]} <= index.keys():
+        return None
+
+    def value(row: Sequence[Any], name: str) -> float | None:
+        position = index.get(_SERIES_KEYS[name])
+        raw = row[position] if position is not None and position < len(row) else None
+        return float(raw) if isinstance(raw, int | float) and not isinstance(raw, bool) and raw >= 0 else None
+
+    channels: dict[str, list[float | None]] = {k: [] for k in ("elapsed", "timer", "distance", "speed", "hr", "cad")}
+    last_elapsed = -1.0
+    for item in details.get("activityDetailMetrics") or ():
+        row = item.get("metrics") if isinstance(item, Mapping) else None
+        if not isinstance(row, list):
+            continue
+        elapsed, timer, distance = value(row, "elapsed"), value(row, "timer"), value(row, "distance")
+        if elapsed is None or timer is None or distance is None or elapsed < last_elapsed:
+            continue
+        last_elapsed = elapsed
+        one_foot = value(row, "cadence_one_foot")
+        cadence = value(row, "cadence") or (2 * one_foot if one_foot else None)
+        hr = value(row, "hr")
+        for key, v in (
+            ("elapsed", elapsed),
+            ("timer", timer),
+            ("distance", distance),
+            ("speed", value(row, "speed")),
+            ("hr", hr if hr else None),
+            ("cad", cadence if cadence else None),
+        ):
+            channels[key].append(v)
+    if len(channels["elapsed"]) < 2:
+        return None
+    return RunSeries(
+        activity_id=activity_id,
+        elapsed_s=tuple(v or 0.0 for v in channels["elapsed"]),
+        timer_s=tuple(v or 0.0 for v in channels["timer"]),
+        distance_m=tuple(v or 0.0 for v in channels["distance"]),
+        speed_mps=tuple(channels["speed"]),
+        hr_bpm=tuple(channels["hr"]),
+        cadence_spm=tuple(channels["cad"]),
+    )
+
+
 # ─────────────────────────────── the source ───────────────────────────────
 SESSION_HINT = "session missing or expired; run `stridedj auth garmin`"
 LOGIN_HINT = "login rejected; check GARMIN_EMAIL / GARMIN_PASSWORD and the MFA code"
@@ -348,6 +423,14 @@ class GarminLiveSource:
             if activity is not None:
                 activities.append(activity)
         return activities
+
+    async def fetch_series(self, activity_id: ActivityId) -> RunSeries | None:
+        """The per-sample series of one run (no GPS), or None if Garmin has none for it."""
+        api = await self._session()
+        details = await self._call(
+            api.get_activity_details, str(activity_id), SERIES_MAX_SAMPLES, 0, what="activity details"
+        )
+        return series_from_details(activity_id, details)
 
     async def heart_rate_zones(self) -> HeartRateZones | None:
         """The zones configured in Garmin Connect (the same ones the watch uses), or None if unavailable."""

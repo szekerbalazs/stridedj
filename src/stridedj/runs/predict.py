@@ -159,7 +159,7 @@ def _rows(runs: Sequence[ClassifiedRun], *, now: datetime, history_days: int) ->
                 run_type=run.run_type,
                 age_days=age,
                 distance_km=activity.distance_km,
-                duration_min=activity.duration_s / 60.0,
+                duration_min=run.planning_duration_s / 60.0,
                 # no elevation recorded (treadmill, some watches): treated as flat
                 elevation_per_km=(activity.elevation_gain_m or 0.0) / activity.distance_km,
             )
@@ -415,7 +415,7 @@ class DurationPredictor:
         self, run_type: RunType, distance_km: float, similar: Sequence[ClassifiedRun]
     ) -> DurationEstimate:
         b = self.exponent
-        scaled = [r.activity.duration_s / 60.0 * (distance_km / r.activity.distance_km) ** b for r in similar]
+        scaled = [r.planning_duration_s / 60.0 * (distance_km / r.activity.distance_km) ** b for r in similar]
         weights = [
             recency_weight(age_days(r.activity.start, self._now), self._config.recency_half_life_days) for r in similar
         ]
@@ -466,7 +466,7 @@ class DurationPredictor:
 
     def _riegel(self, run_type: RunType, distance_km: float, anchor: ClassifiedRun) -> DurationEstimate:
         exponent = self._config.default_exponent
-        anchor_min = anchor.activity.duration_s / 60.0
+        anchor_min = anchor.planning_duration_s / 60.0
         p50 = anchor_min * (distance_km / anchor.activity.distance_km) ** exponent
         reason = (
             "Too little history for the personal model"
@@ -551,7 +551,7 @@ def _result_row(
         "date": pd.Timestamp(target.activity.start),
         "distance_km": target.activity.distance_km,
         "run_type": target.run_type.value,
-        "actual_min": target.activity.duration_s / 60.0,
+        "actual_min": target.planning_duration_s / 60.0,
         "pred_p50_min": estimate.p50_min,
         "pred_p80_min": estimate.p80_min,
         "method": estimate.method.value,

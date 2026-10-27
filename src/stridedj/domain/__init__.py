@@ -27,7 +27,7 @@ from stridedj.domain.planning import (
     RacePrediction,
     RunningProfile,
 )
-from stridedj.domain.runs import Activity, ClassifiedRun, HeartRateZones, Lap, LapIntensity, RunType
+from stridedj.domain.runs import Activity, ClassifiedRun, HeartRateZones, Lap, LapIntensity, RunSeries, RunType
 
 __all__ = [
     "Activity",
@@ -57,6 +57,7 @@ __all__ = [
     "RacePrediction",
     "ReplyKind",
     "RunPlan",
+    "RunSeries",
     "RunType",
     "RunningProfile",
     "SlotId",

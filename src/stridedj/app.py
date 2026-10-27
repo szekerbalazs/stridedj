@@ -151,6 +151,7 @@ async def build_live_app(settings: Settings, llm: LLMClient, *, usage_sink: Usag
     from stridedj.cal.gcal import GoogleCalendarClient
     from stridedj.music.live import build_live_music
     from stridedj.runs.sources.factory import build_run_source
+    from stridedj.runs.sources.garmin_live import GarminLiveSource
 
     tz = ZoneInfo(settings.athlete.timezone)
     clock = SystemClock()
@@ -159,7 +160,8 @@ async def build_live_app(settings: Settings, llm: LLMClient, *, usage_sink: Usag
     repository = SqliteRunRepository.from_settings(settings.app)
     source = build_run_source(settings)
     zones = await resolve_zones(source, settings)
-    insights = RunInsightsService(source, repository, zones=zones, clock=clock)
+    series_source = source if isinstance(source, GarminLiveSource) else None  # per-sample series: Garmin only
+    insights = RunInsightsService(source, repository, zones=zones, clock=clock, series_source=series_source)
     await insights.refresh()
 
     def run_windows() -> list[TimeSlot]:

@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import math
 import statistics
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 
 import numpy as np
 
 from stridedj.domain import (
     Activity,
+    ActivityId,
     CadenceTarget,
     ClassifiedRun,
     HeartRateZones,
@@ -26,6 +27,7 @@ from stridedj.domain import (
     RunningProfile,
     RunType,
 )
+from stridedj.runs.intervals import IntervalAnalysis
 
 SECONDS_PER_DAY = 86_400.0
 
@@ -113,15 +115,24 @@ def count_work_bouts(activity: Activity) -> int:
     return symbols.count("W")
 
 
-def classify(activity: Activity, zones: HeartRateZones) -> ClassifiedRun:
+def classify(activity: Activity, zones: HeartRateZones, intervals: IntervalAnalysis | None = None) -> ClassifiedRun:
     """Assign a run type, in decreasing order of evidence quality.
 
+    0. The per-sample series (`runs/intervals.py`: pace, watch stops, heart rate), when stored, finds interval sessions
+       that laps cannot (1-km auto-laps hide the reps and their rests).
     1. Lap structure with >= 2 work bouts alternating with rests → intervals. Checked first because the *average* HR of
        an interval session (warm-up, recoveries) usually lands in an easy zone, so zone time alone would mislabel it.
     2. Dominant zone by time in zone (`hr_zone_s`), as recorded by the watch.
     3. Average HR mapped through the user's zones (sources without zone times).
     4. No HR at all: assume an easy Z2 run (the most common run type), and say so in the reason.
     """
+    if intervals is not None and intervals.is_intervals:
+        return ClassifiedRun(
+            activity=activity,
+            run_type=RunType.INTERVALS,
+            reason=intervals.reason,
+            work_cadence_spm=intervals.work_cadence_spm,
+        )
     bouts = count_work_bouts(activity)
     if bouts >= MIN_WORK_BOUTS:
         return ClassifiedRun(
@@ -145,8 +156,13 @@ def classify(activity: Activity, zones: HeartRateZones) -> ClassifiedRun:
     return ClassifiedRun(activity=activity, run_type=RunType.Z2, reason="no heart-rate data: assumed an easy Z2 run")
 
 
-def classify_all(activities: Sequence[Activity], zones: HeartRateZones) -> list[ClassifiedRun]:
-    return [classify(activity, zones) for activity in activities]
+def classify_all(
+    activities: Sequence[Activity],
+    zones: HeartRateZones,
+    intervals: Mapping[ActivityId, IntervalAnalysis] | None = None,
+) -> list[ClassifiedRun]:
+    found = intervals or {}
+    return [classify(activity, zones, found.get(activity.activity_id)) for activity in activities]
 
 
 # ─────────────────────────────── cadence ───────────────────────────────
@@ -166,7 +182,7 @@ def work_lap_cadence_spm(activity: Activity) -> float | None:
 def run_cadence_spm(run: ClassifiedRun) -> float | None:
     """The cadence that characterises a run of its type (work-lap cadence for intervals, else the run average)."""
     if run.run_type is RunType.INTERVALS:
-        return work_lap_cadence_spm(run.activity)
+        return run.work_cadence_spm or work_lap_cadence_spm(run.activity)
     return run.activity.avg_cadence_spm
 
 
