@@ -28,7 +28,7 @@ user msg ─► │ context ─► model ─┬─► tool calls ─► ToolRegi
 
 ## Why hand-built, not a framework?
 - **Frameworks considered:** LangGraph, the OpenAI Agents SDK, LiveKit Agents (voice). They are useful for big graphs, handoffs and voice pipelines.
-- **What this agent needs:** one loop, six tools and an approval gate.
+- **What this agent needs:** one loop, seven tools and an approval gate.
 - **What the hand-built version gives:**
   1. every safety-relevant decision is a line of my code that I can point to;
   2. the fakes (`ScriptedLLM`) plug in at the `LLMClient` port, so the whole agent is testable offline;

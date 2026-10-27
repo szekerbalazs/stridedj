@@ -53,7 +53,7 @@ class InputGuard:
         allowed_user_ids: set[int],
         clock: Clock,
         max_chars: int = 500,
-        max_messages: int = 12,
+        max_messages: int = 30,
         per: timedelta = timedelta(minutes=10),
     ) -> None:
         self._allowed = allowed_user_ids

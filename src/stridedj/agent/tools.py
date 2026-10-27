@@ -7,13 +7,16 @@ Tool design rules applied here (they are also the answer to "how do you design t
 * **Aggregates only**: no GPS, no raw series, no activity names, no song titles, no calendar titles.
 * **Errors are instructions** the model can act on ("slot too short: call find_free_slots with duration_min=75").
 * **Few, task-shaped tools** instead of thin API wrappers: fewer calls, fewer ways to go wrong.
+* **Answer the user's question, not a nearby one**: "is 08:00 free?" gets an exact check (`start_time`), not three
+  example slots the model must not over-interpret; arithmetic on the user's numbers (interval totals) is code.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from pydantic import Field, field_validator
 
@@ -24,6 +27,7 @@ from stridedj.domain import (
     DraftId,
     DurationEstimate,
     Frozen,
+    IntervalSessionDistance,
     Mood,
     PlanId,
     PlaylistDraftSummary,
@@ -33,12 +37,17 @@ from stridedj.domain import (
     RunType,
     SlotId,
     SlotRequest,
+    StartStatus,
+    TimeSlot,
+    Weekday,
 )
 from stridedj.errors import ToolError
 from stridedj.harness.tools import Tool, ToolRegistry
 from stridedj.ports import Clock, PlaylistPlanner, RunInsights, SlotFinder
+from stridedj.runs.sessions import interval_session_distance
 
 MAX_DAYS_AHEAD = 14
+_CLOCK_TIME = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 RUN_TYPE_HELP = "z1..z5 = the runner's own heart-rate zones (z2 = easy), 'intervals' = a structured interval session"
 
 
@@ -64,9 +73,20 @@ class EstimateDurationArgs(Frozen):
 
 
 class FindSlotsArgs(Frozen):
-    date: str = Field(description="local date of the run, YYYY-MM-DD (resolve 'tonight'/'tomorrow' from the Context)")
-    day_part: DayPart = Field(description="morning 06:00-10:00, midday 11:30-14:00, evening 17:00-21:30, any = all day")
+    weekday: Weekday = Field(description="the weekday of the run, from the Context's date table")
+    date: str = Field(
+        description="local date of the run, YYYY-MM-DD, from the Context's date table (same row as weekday)"
+    )
+    day_part: DayPart = Field(
+        description="morning 06:00-10:00, midday 11:30-14:00, evening 17:00-21:30, any = all day; "
+        "ignored when start_time is set"
+    )
     duration_min: int = Field(description="slot length in minutes: pass slot_min from estimate_duration")
+    start_time: str | None = Field(
+        default=None,
+        description="the start the runner asked for, 'HH:MM' 24h local (e.g. '08:00' for 'at 8'), or null if they "
+        "named no time. When set, exactly this start is checked",
+    )
 
     @field_validator("date")
     @classmethod
@@ -79,6 +99,55 @@ class FindSlotsArgs(Frozen):
     def _length(cls, v: int) -> int:
         if not 15 <= v <= 360:
             raise ValueError("duration_min must be between 15 and 360")
+        return v
+
+    @field_validator("start_time")
+    @classmethod
+    def _clock(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        match = _CLOCK_TIME.fullmatch(v.strip())
+        if match is None:
+            raise ValueError("start_time must be 'HH:MM' (24h), e.g. '08:00', or null")
+        return f"{int(match.group(1)):02d}:{match.group(2)}"
+
+
+class IntervalDistanceArgs(Frozen):
+    reps: int = Field(description="number of work repetitions, e.g. 4 for '4x800'")
+    rep_m: float = Field(description="length of one repetition in metres, e.g. 800, or 1000 for '1k'")
+    warmup_km: float = Field(description="warm-up in km (0 if the runner says none)")
+    cooldown_km: float = Field(description="cool-down in km (0 if the runner says none)")
+    recovery_m: float | None = Field(
+        description="jog recovery between repetitions in metres if the runner named one, else null (half a "
+        "repetition is assumed)"
+    )
+
+    @field_validator("reps")
+    @classmethod
+    def _reps(cls, v: int) -> int:
+        if not 1 <= v <= 50:
+            raise ValueError("reps must be between 1 and 50")
+        return v
+
+    @field_validator("rep_m")
+    @classmethod
+    def _rep(cls, v: float) -> float:
+        if not 50 <= v <= 10_000:
+            raise ValueError("rep_m is in metres and must be between 50 and 10000 (1k = 1000)")
+        return v
+
+    @field_validator("warmup_km", "cooldown_km")
+    @classmethod
+    def _wu_cd(cls, v: float) -> float:
+        if not 0 <= v <= 20:
+            raise ValueError("warm-up and cool-down are in km and must be between 0 and 20")
+        return v
+
+    @field_validator("recovery_m")
+    @classmethod
+    def _recovery(cls, v: float | None) -> float | None:
+        if v is not None and not 0 <= v <= 5_000:
+            raise ValueError("recovery_m is in metres and must be between 0 and 5000, or null")
         return v
 
 
@@ -111,9 +180,12 @@ class SlotOut(Frozen):
 
 class SlotsOut(Frozen):
     date: str
+    weekday: Weekday
     day_part: DayPart
     timezone: str
     slots: list[SlotOut]
+    requested_start: str | None = Field(default=None, description="the start_time that was checked, if any")
+    requested_status: StartStatus | None = Field(default=None, description="free / busy / too_soon")
     note: str
 
 
@@ -146,6 +218,16 @@ class AgentDeps:
 
 def _fmt_local(dt: datetime, *, with_day: bool) -> str:
     return dt.strftime("%a %d %b %H:%M") if with_day else dt.strftime("%H:%M")
+
+
+def _start_note(start: str, duration_min: int, status: StartStatus, *, has_alternatives: bool) -> str:
+    if status is StartStatus.FREE:
+        return f"{start} is free for {duration_min} min"
+    why = "is busy" if status is StartStatus.BUSY else "has passed or is less than 15 min away"
+    rest = (
+        "the slots are the nearest free starts before/after it" if has_alternatives else "no other start fits that day"
+    )
+    return f"{start} {why} for {duration_min} min; {rest}"
 
 
 def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
@@ -182,12 +264,34 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
     async def find_free_slots(args: FindSlotsArgs) -> SlotsOut:
         day = date.fromisoformat(args.date)
         today = now().date()
+        if Weekday.of(day) is not args.weekday:
+            ahead = (list(Weekday).index(args.weekday) - today.weekday()) % 7
+            meant = today + timedelta(days=ahead)
+            wanted = args.weekday.value
+            raise ToolError(
+                f"{args.date} is a {Weekday.of(day).value}, not a {wanted}; the next {wanted} is {meant.isoformat()}. "
+                "Check the Context's date table and call again"
+            )
         if day < today:
             raise ToolError(f"{args.date} is in the past; today is {today.isoformat()}")
         if day > today + timedelta(days=MAX_DAYS_AHEAD):
             raise ToolError(f"can only plan up to {MAX_DAYS_AHEAD} days ahead")
         request = SlotRequest(day=day, day_part=args.day_part, duration_min=args.duration_min)
-        found = await deps.slots.free_slots(request, tz=tz, now=now())
+        status: StartStatus | None = None
+        found: list[TimeSlot]
+        if args.start_time is not None:
+            check = await deps.slots.check_start(request, time.fromisoformat(args.start_time), tz=tz, now=now())
+            status = check.status
+            found = [check.slot] if status is StartStatus.FREE else list(check.alternatives)
+            note = _start_note(args.start_time, args.duration_min, status, has_alternatives=bool(found))
+        else:
+            found = list(await deps.slots.free_slots(request, tz=tz, now=now()))
+            note = (
+                "no free slot of that length in this day part"
+                if not found
+                else f"{len(found)} example slot(s) spread over the day part, not every free start: to check a "
+                "specific time, call again with start_time"
+            )
         out: list[SlotOut] = []
         for slot in found:
             slot_id = SlotId(f"s{len(state.slots) + 1}")
@@ -199,13 +303,33 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
                     end_local=_fmt_local(slot.end.astimezone(tz), with_day=False),
                 )
             )
-        note = "no free slot of that length in this day part" if not out else f"{len(out)} free slot(s)"
-        return SlotsOut(date=args.date, day_part=args.day_part, timezone=session.user.timezone, slots=out, note=note)
+        return SlotsOut(
+            date=args.date,
+            weekday=args.weekday,
+            day_part=args.day_part,
+            timezone=session.user.timezone,
+            slots=out,
+            requested_start=args.start_time,
+            requested_status=status,
+            note=note,
+        )
+
+    async def interval_distance(args: IntervalDistanceArgs) -> IntervalSessionDistance:
+        return interval_session_distance(
+            reps=args.reps,
+            rep_m=args.rep_m,
+            warmup_km=args.warmup_km,
+            cooldown_km=args.cooldown_km,
+            recovery_m=args.recovery_m,
+        )
 
     async def draft_playlist(args: DraftPlaylistArgs) -> DraftOut:
         target = cadence(args.run_type)
         draft = await deps.playlists.draft(
-            run_type=args.run_type, cadence=target, duration_min=args.duration_min, mood=args.mood
+            run_type=args.run_type,
+            cadence=target,
+            duration_min=args.duration_min,
+            mood=args.mood,
         )
         state.drafts[draft.draft_id] = draft
         summary = PlaylistDraftSummary(
@@ -273,10 +397,20 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
             ),
             Tool(
                 "find_free_slots",
-                "Find up to 3 free calendar slots of duration_min minutes on a date and part of the day. Returns "
-                "slot_ids to use in propose_plan. Use slot_min from estimate_duration as duration_min.",
+                "Find free calendar slots of duration_min minutes on a date. Without start_time: up to 3 example "
+                "slots spread over the day part (other starts may be free too). With start_time: checks exactly "
+                "that start; if it is busy, returns the nearest free starts before and after it. Returns slot_ids "
+                "to use in propose_plan. Use slot_min from estimate_duration as duration_min.",
                 FindSlotsArgs,
                 find_free_slots,
+            ),
+            Tool(
+                "interval_distance",
+                "Total distance of an interval session from its parts: warm-up + reps x rep_m + recoveries between "
+                "the reps + cool-down. If no recovery is given, half a repetition is assumed (recovery_assumed). "
+                "Use total_km as distance_km for estimate_duration and propose_plan; never add it up yourself.",
+                IntervalDistanceArgs,
+                interval_distance,
             ),
             Tool(
                 "draft_playlist",

@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
 from stridedj.agent.session import AgentSession
-from stridedj.agent.tools import AgentDeps, build_tools
+from stridedj.agent.tools import MAX_DAYS_AHEAD, AgentDeps, build_tools
 from stridedj.costs.ledger import UsageSink
 from stridedj.domain import AgentReply, ExecutionResult, PlanId, ReplyKind, RunPlan, UserContext, UserId
 from stridedj.harness.approvals import ApprovalStore
@@ -28,7 +28,7 @@ from stridedj.llm.base import LLMClient
 log = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
-DEFAULT_PROMPT = PROMPTS_DIR / "system_v2.md"  # v1 kept for comparison (see docs/PROMPTING.md)
+DEFAULT_PROMPT = PROMPTS_DIR / "system_v3.md"  # v1, v2 kept for comparison (see docs/PROMPTING.md)
 
 
 class AgentResponse(BaseModel):
@@ -76,9 +76,15 @@ class StrideAgent:
 
     def _context(self, user: UserContext, now: datetime) -> dict[str, str]:
         local = now.astimezone(user.tz)
+        today = local.date()
+        # a lookup table, so the model copies "Mon 02 Nov = 2026-11-02" instead of doing weekday arithmetic
+        names = {0: "today ", 1: "tomorrow "}
+        days = (today + timedelta(days=i) for i in range(MAX_DAYS_AHEAD + 1))
         return {
             "Now": f"{local:%A %d %B %Y, %H:%M} ({user.timezone})",
-            "Today's date": local.date().isoformat(),
+            "Dates (look them up, never compute them)": ", ".join(
+                f"{names.get(i, '')}{d:%a %d %b} = {d.isoformat()}" for i, d in enumerate(days)
+            ),
         }
 
     async def handle(self, user: UserContext, text: str) -> AgentResponse:

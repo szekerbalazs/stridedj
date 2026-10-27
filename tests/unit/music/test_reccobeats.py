@@ -23,7 +23,7 @@ from stridedj.music.reccobeats import (
 )
 from tests.unit.music.support import FrozenClock, load_fixture
 
-RICK = TrackId("4uLU6hMCjMI75M1A2tKUQC")  # not in ReccoBeats' catalogue (verified live)
+RICK = TrackId("4uLU6hMCjMI75M1A2tKUQC")  # not in ReccoBeats' catalogue (checked against the API)
 BLINDING_LIGHTS = TrackId("0VjIjW4GlUZAMYd2vXMi3b")
 MR_BRIGHTSIDE = TrackId("3n3Ppam7vgaVa1iaRUc9Lp")
 

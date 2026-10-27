@@ -78,3 +78,14 @@ class RunningProfile(Frozen):
     median_cadence_spm: float | None = None
     last_run_days_ago: int | None = Field(default=None, ge=0)
     pace_trend_s_per_km_per_30d: float | None = Field(default=None, description="negative = getting faster")
+
+
+class IntervalSessionDistance(Frozen):
+    """The total of an interval session ("4x800, 2 km warm-up, 1 km cool-down"), added up by code, not the LLM."""
+
+    total_km: float = Field(gt=0, description="pass this as distance_km")
+    warmup_km: float = Field(ge=0)
+    work_km: float = Field(gt=0)
+    recovery_km: float = Field(ge=0)
+    cooldown_km: float = Field(ge=0)
+    recovery_assumed: bool = Field(description="True when the runner gave no recovery: half a repetition was assumed")

@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from evals.graders import resolve_date
 from evals.tasks import Task, expected_kinds
-from stridedj.domain import AgentReply, DayPart, MissingField, Mood, ReplyKind
+from stridedj.domain import AgentReply, DayPart, MissingField, Mood, ReplyKind, Weekday
 from stridedj.llm.base import InputItem
 from stridedj.llm.fake import Policy, ScriptedTurn
 
@@ -38,8 +38,8 @@ def _final(
     )
 
 
-def _planning_step(task: Task, tz: ZoneInfo, done: dict[str, Any]) -> ScriptedTurn | None:
-    """The next planning step, or None once propose_plan has run."""
+def _planning_step(task: Task, tz: ZoneInfo, done: dict[str, Any], *, propose: bool) -> ScriptedTurn | None:
+    """The next planning step, or None once propose_plan has run (or, if `propose` is false, once slots were found)."""
     e = task.expect
     run_type = e.run_type.value if e.run_type else "z2"
     distance = e.distance_km or 10.0
@@ -47,16 +47,26 @@ def _planning_step(task: Task, tz: ZoneInfo, done: dict[str, Any]) -> ScriptedTu
         return ScriptedTurn(tool_calls=[("estimate_duration", {"run_type": run_type, "distance_km": distance})])
     estimate = done["estimate_duration"]
     if "find_free_slots" not in done:
-        day = resolve_date(e.date or "today", task.now, tz).isoformat()
+        resolved = resolve_date(e.date or "today", task.now, tz)
+        day = resolved.isoformat()
         part = (e.day_part or DayPart.ANY).value
         calls: list[tuple[str, dict[str, Any]]] = [
-            ("find_free_slots", {"date": day, "day_part": part, "duration_min": estimate["slot_min"]})
+            (
+                "find_free_slots",
+                {
+                    "weekday": Weekday.of(resolved).value,
+                    "date": day,
+                    "day_part": part,
+                    "duration_min": estimate["slot_min"],
+                    "start_time": e.start_time,
+                },
+            )
         ]
         if e.playlist is not False:
             mood = (e.mood or Mood.USUAL).value
             calls.append(("draft_playlist", {"run_type": run_type, "duration_min": estimate["p80_min"], "mood": mood}))
         return ScriptedTurn(tool_calls=calls)  # independent → in parallel, like the prompt asks
-    if "propose_plan" in done:
+    if "propose_plan" in done or not propose:
         return None
     slots = done["find_free_slots"]["slots"]
     if not slots:
@@ -87,7 +97,7 @@ def reference_policy(task: Task, timezone: str = "Europe/Zurich") -> Policy:
                 args = {"run_type": e.run_type.value if e.run_type else "z2"} if name == "get_running_profile" else {}
                 return ScriptedTurn(tool_calls=[(name, args)])
         if kind is ReplyKind.PROPOSAL or "find_free_slots" in e.must_call:
-            step = _planning_step(task, tz, done)
+            step = _planning_step(task, tz, done, propose=kind is ReplyKind.PROPOSAL)
             if step is not None:
                 return step
         if kind is ReplyKind.PROPOSAL:

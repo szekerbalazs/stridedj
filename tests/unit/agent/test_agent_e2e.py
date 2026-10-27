@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from datetime import datetime
 
 import pytest
@@ -9,8 +11,9 @@ import pytest
 from evals.reference import reference_policy
 from evals.tasks import load_tasks
 from stridedj.app import DemoApp, build_demo_app
-from stridedj.domain import ReplyKind, UserContext, UserId
+from stridedj.domain import AgentReply, ReplyKind, UserContext, UserId
 from stridedj.errors import ApprovalError
+from stridedj.llm.base import InputItem
 from stridedj.llm.fake import ScriptedLLM, ScriptedTurn
 
 NOW = datetime.fromisoformat("2026-10-17T15:00:00+02:00")
@@ -100,3 +103,57 @@ async def test_every_run_is_reported_to_the_usage_sink() -> None:
     await app.agent.handle(USER, "10k Z2 tonight")
     assert len(recorded) == 1
     assert recorded[0].steps >= 1
+
+
+async def test_a_named_free_start_is_checked_exactly_and_proposed() -> None:
+    app = await _app_for("c13-time-between-day-parts")
+    response = await app.agent.handle(USER, "10k Z2 tomorrow at 10:00")
+    assert response.reply.kind is ReplyKind.PROPOSAL
+    assert response.plan is not None
+    assert f"{response.plan.slot.start.astimezone(USER.tz):%a %H:%M}" == "Sun 10:00"
+
+
+async def test_a_named_busy_start_gets_the_nearest_free_starts_and_no_proposal() -> None:
+    app = await _app_for("c14-requested-time-busy")
+    response = await app.agent.handle(USER, "10k Z2 on Monday at 9:00")
+    assert response.reply.kind is ReplyKind.ANSWER
+    assert response.plan is None
+    outputs = [
+        e.data["output"] for e in response.outcome.transcript.tool_events() if e.data["name"] == "find_free_slots"
+    ]
+    slots_out = json.loads(outputs[-1])
+    assert slots_out["requested_status"] == "busy"
+    before, after = slots_out["slots"]
+    assert before["end_local"] == "08:30"  # work starts 08:30: the latest start that still fits before it
+    assert after["start_local"] == "Mon 19 Oct 17:30"  # the first start after work
+
+
+async def test_the_context_has_a_date_table_so_the_model_never_computes_dates() -> None:
+    llm = ScriptedLLM(
+        [ScriptedTurn(final=AgentReply(kind=ReplyKind.ANSWER, message="ok", proposal_id=None, missing_fields=[]))]
+    )
+    app = await build_demo_app(llm, now=NOW)
+    await app.agent.handle(USER, "hi")
+    instructions = str(llm.calls[0]["instructions"])
+    assert "today Sat 17 Oct = 2026-10-17, tomorrow Sun 18 Oct = 2026-10-18, Mon 19 Oct = 2026-10-19" in instructions
+    assert "Sat 31 Oct = 2026-10-31" in instructions  # 14 days ahead, the planning horizon
+
+
+async def test_a_weekday_that_does_not_match_the_date_is_a_correctable_tool_error() -> None:
+    def policy(items: Sequence[InputItem]) -> ScriptedTurn:
+        if not any(i.get("type") == "function_call_output" for i in items):
+            args = {
+                "weekday": "monday",
+                "date": "2026-10-20",
+                "day_part": "any",
+                "duration_min": 60,
+                "start_time": None,
+            }
+            return ScriptedTurn(tool_calls=[("find_free_slots", args)])
+        return ScriptedTurn(final=AgentReply(kind=ReplyKind.ANSWER, message="ok", proposal_id=None, missing_fields=[]))
+
+    app = await build_demo_app(ScriptedLLM(policy), now=NOW)
+    response = await app.agent.handle(USER, "10k Z2 on Monday")
+    (event,) = response.outcome.transcript.tool_events()
+    assert event.data["is_error"] is True
+    assert "2026-10-20 is a tuesday, not a monday; the next monday is 2026-10-19" in event.data["output"]

@@ -41,8 +41,8 @@ On **Approve**, it creates the calendar event and a private Spotify playlist, ex
 StrideDJ is a **tool-calling agent** inside a **hand-built harness**, with no agent framework. Every safety-relevant decision is a line of code you can point to.
 
 1. **Guard.** Your Telegram message passes deterministic checks before any model sees it: allowlisted user, private chat, secret detector, length and rate limits.
-2. **Context.** A versioned system prompt, the current date/time in your timezone, and a compact history (earlier messages and answers, no stale tool output).
-3. **Loop.** The OpenAI Responses API (stateless, `store=false`) calls six **read-only** tools with strict JSON schemas until it returns a final answer, a strict `AgentReply` JSON object. The harness enforces budgets: steps, tool calls, $, wall time.
+2. **Context.** A versioned system prompt, the current date/time in your timezone plus a 15-day date table (so the model looks dates up instead of computing them), and a compact history (earlier messages and answers, no stale tool output).
+3. **Loop.** The OpenAI Responses API (stateless, `store=false`) calls seven **read-only** tools with strict JSON schemas until it returns a final answer, a strict `AgentReply` JSON object. The harness enforces budgets: steps, tool calls, $, wall time.
 4. **Verification.** The final answer is validated, then *checked against state*: a "proposal" must reference a plan the tools really created.
 5. **Approval.** The proposal card is rendered by code. Its token is bound to the plan's content hash and to you, single use, valid for 15 minutes.
 6. **Execution.** Only the executor writes: one calendar event (idempotent id) and one private playlist, from fixed templates.
@@ -164,7 +164,7 @@ src/stridedj/
 ├── ports.py       Protocols for every external dependency → real adapters + in-memory fakes
 ├── llm/           OpenAI Responses adapter, strict-schema converter, scripted fake models
 ├── harness/       the agent harness: loop, tools, context, guard, approvals, executor, tracing
-├── agent/         StrideDJ-specific: system prompts (versioned), the six tools, session, orchestrator
+├── agent/         StrideDJ-specific: system prompts (versioned), the seven tools, session, orchestrator
 ├── runs/          Garmin / intervals.icu / demo sources, SQLite store, run typing, duration models
 ├── cal/           Google Calendar (free/busy, idempotent insert), DST-safe slot finding
 ├── music/         Spotify (PKCE), ReccoBeats, style model, tempo-folded playlist assembly

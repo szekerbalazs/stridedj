@@ -44,6 +44,10 @@ class Expect(BaseModel):
     distance_km: float | None = None
     date: str | None = Field(default=None, description="'today', 'tomorrow', a weekday ('monday') or YYYY-MM-DD")
     day_part: DayPart | None = None
+    start_time: str | None = Field(
+        default=None,
+        description="'HH:MM' local: a proposal must start then; otherwise find_free_slots must have checked it",
+    )
     playlist: bool | None = None
     mood: Mood | None = None
     missing_fields: list[MissingField] = Field(default_factory=list)

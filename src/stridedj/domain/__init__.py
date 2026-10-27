@@ -9,12 +9,13 @@ from stridedj.domain.agent import (
     UserContext,
 )
 from stridedj.domain.base import ActivityId, ArtistId, DraftId, Frozen, PlanId, SlotId, TrackId, UserId
-from stridedj.domain.calendar import DayPart, SlotOption, SlotRequest, TimeSlot
+from stridedj.domain.calendar import DayPart, SlotOption, SlotRequest, StartCheck, StartStatus, TimeSlot, Weekday
 from stridedj.domain.music import AudioFeatures, Mood, PlaylistDraft, PlaylistDraftSummary, Track
 from stridedj.domain.planning import (
     CadenceTarget,
     DurationEstimate,
     EstimateMethod,
+    IntervalSessionDistance,
     RacePrediction,
     RunningProfile,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "ExecutionResult",
     "Frozen",
     "HeartRateZones",
+    "IntervalSessionDistance",
     "Lap",
     "LapIntensity",
     "MissingField",
@@ -50,9 +52,12 @@ __all__ = [
     "SlotId",
     "SlotOption",
     "SlotRequest",
+    "StartCheck",
+    "StartStatus",
     "TimeSlot",
     "Track",
     "TrackId",
     "UserContext",
     "UserId",
+    "Weekday",
 ]

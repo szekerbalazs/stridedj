@@ -160,7 +160,11 @@ def bot(
         costs = lambda: month_summary(ledger, key_fp=fingerprint)  # noqa: E731
     TelegramBot(
         token=settings.telegram.bot_token.get_secret_value(),
-        guard=InputGuard(allowed_user_ids=set(settings.telegram.allowed_user_ids), clock=SystemClock()),
+        guard=InputGuard(
+            allowed_user_ids=set(settings.telegram.allowed_user_ids),
+            clock=SystemClock(),
+            max_messages=settings.telegram.max_messages_per_10_min,
+        ),
         app_factory=lambda: _build(settings, data, model, source="bot"),
         costs_summary=costs,
     ).run()

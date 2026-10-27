@@ -67,3 +67,41 @@
   description: A follow-up changes only the music mood.
   turns: ["10k Z2 tonight", "Same run but calmer music please"]
   expect: {kind: proposal, run_type: z2, distance_km: 10, date: today, day_part: evening, mood: calmer}
+
+# ── a named start time (free times must not be reported as unavailable) ──
+- id: c12-make-it-later
+  suite: capability
+  description: 'A named start that is free but not among the example slots (06:00, 07:45) must be checked and used.'
+  turns: ["10k Z2 tomorrow morning", "6:00 is too early, make it 8:00"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: tomorrow, start_time: "08:00"}
+
+- id: c13-time-between-day-parts
+  suite: capability
+  description: 10:00 lies between morning and midday; an explicit time wins over the day-part windows.
+  turns: ["10k Z2 tomorrow at 10:00"]
+  expect: {kind: proposal, run_type: z2, distance_km: 10, date: tomorrow, start_time: "10:00"}
+
+- id: c14-requested-time-busy
+  suite: capability
+  description: Monday 09:00 is during work → check exactly that start, don't propose it, offer the nearest free ones.
+  turns: ["10k Z2 on Monday at 9:00"]
+  expect: {kind: [answer, clarification], date: monday, start_time: "09:00", must_call: [find_free_slots]}
+
+# ── interval sessions: ask once for warm-up/cool-down, then add it up (recoveries default to half a rep) ──
+- id: c15-intervals-asked-then-total
+  suite: capability
+  description: 'A three-message dialogue: after warm-up and cool-down are given, the total (2 + 3.2 + 3 × 0.4 + 1) must be inferred, not asked.'
+  turns: ["Interval run tonight", "4 x 800m + warm-up + cooldown", "2 km warm-up and 1 km cool-down"]
+  expect: {kind: proposal, run_type: intervals, distance_km: 7.4, date: today, day_part: evening}
+
+- id: c16-intervals-all-in-one
+  suite: capability
+  description: Reps, warm-up and cool-down in one message → no question; total 2 + 4 + 3 × 0.5 + 1.5 = 9.0 km.
+  turns: ["4x1k with 2 km warm-up and 1.5 km cool-down tomorrow evening"]
+  expect: {kind: proposal, run_type: intervals, distance_km: 9.0, date: tomorrow, day_part: evening}
+
+- id: c17-intervals-given-recovery
+  suite: capability
+  description: An explicit recovery overrides the default; total 2 + 5 + 4 × 0.4 + 2 = 10.6 km.
+  turns: ["5x1000 m with 400 m jog recoveries, 2 km warm-up and 2 km cool-down, tomorrow morning"]
+  expect: {kind: proposal, run_type: intervals, distance_km: 10.6, date: tomorrow, day_part: morning}

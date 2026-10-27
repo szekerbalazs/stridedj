@@ -69,6 +69,7 @@ class TelegramSettings(_EnvSettings):
 
     bot_token: SecretStr | None = None
     allowed_user_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
+    max_messages_per_10_min: int = Field(default=30, ge=1, description="per-user rate limit (button presses are free)")
 
     @field_validator("allowed_user_ids", mode="before")
     @classmethod

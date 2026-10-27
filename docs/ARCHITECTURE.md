@@ -41,7 +41,7 @@ flowchart LR
 
 ## The request path
 1. **Telegram → bot.** The guard runs in code: private chat only, allowlisted user ID, secret detector, length and rate limits.
-2. **StrideAgent** builds the context (versioned system prompt + current date/time + a compact history) and binds the six tools to this user's session.
+2. **StrideAgent** builds the context (versioned system prompt + current date/time + a compact history) and binds the seven tools to this user's session.
 3. **The agent loop** calls OpenAI (strict tools + strict `AgentReply` output) and runs the requested tools in parallel, until a final answer or a budget stop. Every step goes into a transcript.
 4. **The tools** call the domain services through ports:
    - `RunInsights`: duration p50/p80, cadence target, profile, race predictions;

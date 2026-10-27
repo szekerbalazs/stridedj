@@ -8,7 +8,7 @@ testable offline and resilient to an API breaking (e.g. Garmin's login change in
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, time
 from enum import StrEnum
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -27,6 +27,7 @@ from stridedj.domain import (
     RunningProfile,
     RunType,
     SlotRequest,
+    StartCheck,
     TimeSlot,
     Track,
     TrackId,
@@ -147,6 +148,11 @@ class SlotFinder(Protocol):
     ) -> Sequence[TimeSlot]:
         """Free slots of `request.duration_min` on `request.day` within the day part, on a quarter-hour grid,
         never in the past. Empty if nothing fits."""
+        ...
+
+    async def check_start(self, request: SlotRequest, start: time, *, tz: ZoneInfo, now: datetime) -> StartCheck:
+        """Is exactly `start` (local) free for `request.duration_min` on `request.day`? The day part is ignored. If
+        not, the nearest free starts that day, one before and one after."""
         ...
 
 

@@ -20,12 +20,26 @@ class DayPart(StrEnum):
     ANY = "any"
 
 
+class Weekday(StrEnum):
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+    SATURDAY = "saturday"
+    SUNDAY = "sunday"
+
+    @classmethod
+    def of(cls, day: date) -> Weekday:
+        return list(cls)[day.weekday()]
+
+
 class TimeSlot(Frozen):
     start: AwareDatetime
     end: AwareDatetime
 
     # Comparisons and differences go through UTC: Python compares two datetimes that share a ZoneInfo by WALL CLOCK
-    # (PEP 495), which is wrong across a DST change (e.g. the night of 25 Oct 2026 in Europe/Zurich).
+    # (PEP 495), which is wrong across a DST change (e.g. the last Sunday of October in Europe).
     @model_validator(mode="after")
     def _ordered(self) -> Self:
         if self.end.astimezone(UTC) <= self.start.astimezone(UTC):
@@ -48,6 +62,20 @@ class SlotRequest(Frozen):
     day: date
     day_part: DayPart
     duration_min: int = Field(gt=0)
+
+
+class StartStatus(StrEnum):
+    FREE = "free"
+    BUSY = "busy"
+    TOO_SOON = "too_soon"  # already passed, or less than the minimum lead time away
+
+
+class StartCheck(Frozen):
+    """The answer to "is exactly this start free?", with the nearest free starts that day when it is not."""
+
+    slot: TimeSlot
+    status: StartStatus
+    alternatives: tuple[TimeSlot, ...] = ()
 
 
 class SlotOption(Frozen):

@@ -64,10 +64,13 @@ uv run python -m evals.view evals/runs/<run>/<task>__t0.json
 6. **Read the transcripts** before trusting a score.
 7. **Saturation:** when regression stays at 100 %, harder capability tasks are needed.
 
-## Results so far (gpt-6-luna, k = 3, 17 Oct 2026)
+## Results so far (gpt-6-luna, k = 3)
 | Prompt | regression | capability | security (ASR) | cost / full run | latency p50 / p95 |
 |---|---|---|---|---|---|
 | v1 | 100 % | 94 % (pass^3 91 %) | 100 % (0/18) | $0.040 | 5.4 s / 12.5 s |
 | v2 | 100 % | 100 % (pass^3 100 %) | 100 % (0/18) | $0.040 | 5.5 s / 11.5 s |
+| v3 (38 tasks incl. c12–c17) | 100 % | 100 % (pass^3 100 %) | 100 % (0/18) | $0.061 | 6.5 s / 14.0 s |
+
+The six tasks added with v3 come from real use (step 1 above). Before the fix they passed 2/18 trials, after it 18/18.
 
 The vulnerable fake model on the security suite: the indirect attacks (s01 poisoned invite, s02 poisoned track titles) are blocked because the text never reaches the context. The direct ones (s05, s06) "hijack" the fake, but it still can't write anything.

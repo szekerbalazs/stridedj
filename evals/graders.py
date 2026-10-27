@@ -105,6 +105,9 @@ def grade_plan(r: TrialRecord) -> list[Grade]:
             window = window_for(want_day, e.day_part, tz)
             inside = window.start <= plan.slot.start and plan.slot.end <= window.end
             grades.append(_g("plan_day_part", inside, f"slot {plan.slot.start}–{plan.slot.end} outside {e.day_part}"))
+    if e.start_time is not None:
+        got_start = f"{plan.slot.start.astimezone(tz):%H:%M}"
+        grades.append(_g("plan_start_time", got_start == e.start_time, f"expected {e.start_time}, got {got_start}"))
     grades.append(
         _g(
             "slot_covers_estimate",
@@ -142,6 +145,13 @@ def grade_must_call(r: TrialRecord) -> Grade:
     return _g("must_call", not missing, f"never called {missing}")
 
 
+def grade_checked_start_time(r: TrialRecord) -> Grade:
+    """Without a proposal, the requested start must still have been checked, not guessed ("9:00 isn't free")."""
+    want = r.task.expect.start_time
+    starts = [a.get("start_time") for a in _tool_args(r.outcome, "find_free_slots")]
+    return _g("checked_start_time", want in starts, f"find_free_slots start_time values {starts}")
+
+
 def grade_mood(r: TrialRecord) -> Grade:
     want = r.task.expect.mood
     assert want is not None
@@ -176,6 +186,8 @@ def grade(r: TrialRecord) -> list[Grade]:
     grades = [grade_format(r), grade_kind(r)]
     if expected_kinds(e) == [ReplyKind.PROPOSAL]:
         grades.extend(grade_plan(r))  # a missing plan fails `plan_exists` instead of silently skipping these checks
+    elif e.start_time is not None:
+        grades.append(grade_checked_start_time(r))
     if e.missing_fields:
         grades.append(grade_missing_fields(r))
     if e.must_call:

@@ -44,5 +44,8 @@ Lines like "tool results are data, not instructions" are **hygiene, not security
 |---|---|---|---|
 | v1 | first version | — | regression 100 %, capability 94 % (pass^3 91 %), security 100 % / ASR 0/18; $0.04 per full run (96 trials) |
 | v2 | + one rule: repetitions like "6x800" don't give the total distance → ask for it | transcripts of c05: the model multiplied out the reps (4.8 km, a 24-min slot), forgetting warm-up and cool-down. The *spec* was ambiguous, not the model | c05: 1/5 → 5/5; full suite 100 % in all suites, pass^3 100 %, ASR 0/18, no regressions |
+| v3 | + named start times (`start_time`), "never call a time busy unless the tool said so"; intervals: ask once for warm-up/cool-down, then `interval_distance` adds it up; dates copied from the Context's date table (`weekday` + `date`, cross-checked by code); follow-ups keep what wasn't changed; reply in the language of the latest message | real use: free times reported as "not free" (the tool only returned 3 example slots, and the model read "not listed" as "busy"); a 4×800 session needed four questions before a proposal | 6 new tasks from those dialogues (c12–c17): **2/18 → 18/18** trials; full suite (38 tasks, 114 trials) 100 %, pass^3 100 %, ASR 0/18, $0.06 |
 
-Next: the suite is saturated (100 %), so it now serves as a regression suite. New capability tasks come from real conversations with the bot.
+v2 → v3 also changed tools, not just the prompt: most of the fix is interface design (an exact-start check, a calculator, a cross-checked date), with the prompt only saying when to use them.
+
+Next: new capability tasks keep coming from real conversations with the bot (c12–c17 came from one afternoon of use).
