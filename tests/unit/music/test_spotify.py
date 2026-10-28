@@ -243,6 +243,8 @@ async def test_search_pages_by_ten_with_offset() -> None:
     assert params == [("10", "0"), ("10", "10"), ("5", "20")]
     assert api.api_requests()[0].url.params["q"] == 'genre:"drum and bass"'
     assert api.api_requests()[0].url.params["type"] == "track"
+    # market=from_token needs the user-read-private scope (403 "Insufficient client scope" without it)
+    assert all("market" not in r.url.params for r in api.api_requests())
 
 
 async def test_artist_genres_are_memoised_and_cached(tmp_path: Path) -> None:

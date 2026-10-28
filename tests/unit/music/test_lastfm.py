@@ -57,6 +57,14 @@ async def test_tags_become_closed_genres_and_are_cached_per_artist(tmp_path: Pat
     assert api.client(cache).cached(ARTIST) == ("techno", "house")
 
 
+async def test_an_artist_on_the_blocklist_gets_no_genre_and_is_cached(tmp_path: Path) -> None:
+    api = FakeLastFm(_tags(("classical", 100), ("piano", 80), ("electronic", 40)))
+    cache = JsonCache(tmp_path / "cache.db")
+    assert await api.client(cache).artist_genres(ARTIST, "A Composer") == ()
+    assert api.client(cache).cached(ARTIST) == ()  # known: not looked up again
+    assert len(api.requests) == 1
+
+
 async def test_unknown_artist_is_an_empty_cached_answer(tmp_path: Path) -> None:
     api = FakeLastFm({"error": 6, "message": "The artist you supplied could not be found", "links": []})
     cache = JsonCache(tmp_path / "cache.db")

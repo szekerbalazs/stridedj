@@ -26,14 +26,17 @@ class Mood(StrEnum):
 class MusicChoice(StrEnum):
     """Where the songs come from (a closed set: the runner's wording is mapped to one of these, never passed on)."""
 
-    USUAL = "usual"  # the running music plus fitting songs from the library; recommendations only to fill gaps
-    FAMILIAR = "familiar"  # only the running playlists and songs by their artists
-    DISCOVER = "discover"  # more new songs in the runner's style (recommendations from the start)
+    USUAL = "usual"  # ≥ 50 % new songs (not in the running playlists); recommendations only to fill gaps
+    FAMILIAR = "familiar"  # 0 % new: only songs of the running playlists
+    DISCOVER = "discover"  # 100 % new: only songs outside the running playlists, in their style
 
 
 class Genre(StrEnum):
     """The closed genre vocabulary. Free-form tags (Last.fm tags are written by anyone) are mapped onto it in
     `music/genres.py`; only these values reach the model, the tool schema and the playlist card."""
+
+    # Running genres only: classical, country, jazz, ... are on the blocklist in `music/genres.py` instead. (A comment,
+    # not the docstring: the docstring is part of the tool schema the model reads.)
 
     TECHNO = "techno"
     HOUSE = "house"
@@ -52,7 +55,6 @@ class Genre(StrEnum):
     LATIN = "latin"
     FUNK_DISCO = "funk & disco"
     REGGAE = "reggae"
-    COUNTRY = "country"
 
 
 class Track(Frozen):
@@ -89,6 +91,11 @@ class PlaylistDraft(Frozen):
     mean_abs_bpm_error: float = Field(ge=0, description="mean |folded tempo − target| over the chosen tracks")
     novelty_share: float = Field(ge=0, le=1, description="share of tracks not in the running playlists")
     top_genres: tuple[str, ...] = ()
+    # what it was drafted with, so the playlist alone can be redrafted (the bot's 0 / 50 / 100 % new buttons)
+    requested_min: float | None = Field(default=None, gt=0)
+    mood: Mood = Mood.USUAL
+    music: MusicChoice = MusicChoice.USUAL
+    genre: Genre | None = None
 
 
 class PlaylistDraftSummary(Frozen):

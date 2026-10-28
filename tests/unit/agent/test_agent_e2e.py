@@ -11,7 +11,7 @@ import pytest
 from evals.reference import reference_policy
 from evals.tasks import load_tasks
 from stridedj.app import DemoApp, build_demo_app
-from stridedj.domain import AgentReply, ReplyKind, UserContext, UserId
+from stridedj.domain import AgentReply, MusicChoice, ReplyKind, UserContext, UserId
 from stridedj.errors import ApprovalError
 from stridedj.llm.base import InputItem
 from stridedj.llm.fake import ScriptedLLM, ScriptedTurn
@@ -54,6 +54,45 @@ async def test_someone_else_cannot_approve() -> None:
     with pytest.raises(ApprovalError, match="only the person"):
         await app.agent.approve(response.approval_token, user_id=UserId("tg:999"))
     assert app.fake_calendar.inserted == []
+
+
+async def test_a_redraft_changes_only_the_playlist_and_replaces_the_token() -> None:
+    """The bot's 0 / 50 / 100 % new buttons: same run, a new playlist, a new token; the old card is dead."""
+    app = await _app_for("r01-10k-z2-tonight")
+    response = await app.agent.handle(USER, "10k Z2 tonight")
+    old = response.plan
+    assert old is not None and old.playlist is not None and response.approval_token is not None
+    steps = len(app.agent.session(USER).history)
+
+    plan, token = await app.agent.redraft(response.approval_token, user_id=USER.user_id, music=MusicChoice.DISCOVER)
+    assert plan.playlist is not None
+    assert plan.playlist.music is MusicChoice.DISCOVER and plan.playlist.novelty_share == 1.0
+    assert plan.playlist.requested_min == old.playlist.requested_min
+    assert (plan.slot, plan.distance_km, plan.cadence, plan.duration) == (
+        old.slot,
+        old.distance_km,
+        old.cadence,
+        old.duration,
+    )
+    assert plan.plan_id != old.plan_id
+    assert len(app.agent.session(USER).history) == steps  # no model call, nothing added to the chat
+
+    with pytest.raises(ApprovalError, match="replaced"):
+        await app.agent.approve(response.approval_token, user_id=USER.user_id)
+    result = await app.agent.approve(token, user_id=USER.user_id)
+    assert result.errors == ()
+    assert len(app.fake_calendar.inserted) == 1
+    assert app.fake_writer.created[0].track_ids == plan.playlist.track_ids
+
+
+async def test_only_the_person_who_asked_can_redraft() -> None:
+    app = await _app_for("r01-10k-z2-tonight")
+    response = await app.agent.handle(USER, "10k Z2 tonight")
+    assert response.approval_token is not None
+    with pytest.raises(ApprovalError, match="only the person"):
+        await app.agent.redraft(response.approval_token, user_id=UserId("tg:999"), music=MusicChoice.FAMILIAR)
+    result = await app.agent.approve(response.approval_token, user_id=USER.user_id)  # the old card still works
+    assert result.errors == ()
 
 
 async def test_plan_numbers_come_from_state_not_the_model() -> None:

@@ -117,6 +117,9 @@ def build_live_music(settings: Settings, *, run_windows: RunWindows) -> LiveMusi
         run_windows=run_windows,
         history=history,
         genres=genres,
-        settings=PlannerSettings(max_genre_lookups=40),  # Last.fm is throttled (~3/s): the warm-up does the bulk
+        settings=PlannerSettings(
+            max_genre_lookups=40,  # Last.fm is throttled (~3/s): the warm-up does the bulk
+            saved_tracks_max_age_s=2 * 3600,  # the warm-up (every 30 min) refreshes them; a draft then needs no paging
+        ),
     )
     return LiveMusic(planner=SyncingPlanner(planner, plays, spotify), writer=spotify, history=history)

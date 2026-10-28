@@ -13,7 +13,8 @@ can fill the requested duration and record which one was used, so the agent can 
 Fit: a new song must look like the running music. Its fit is the style score plus a bonus when one of its artists is
 already in the running music; below the caller's `style_floor` it is left out, so a short library gives a shorter
 playlist instead of off-style filler (without it, drafts on a real library were mostly "everyday music", and spoken
-word got in). Songs from recently created playlists rank lower (rotation), so runs get variety.
+word got in). Songs of the last created playlists are left out by the planner (rotation); if it has to reuse some as
+a last resort, they rank lower here.
 """
 
 from __future__ import annotations
@@ -47,12 +48,23 @@ MAX_GENRE_CHARS = 24
 MAX_SPEECHINESS = 0.66  # Spotify's definition: above 0.66 a track is "probably made entirely of spoken words"
 MAX_TRACK_MS = 15 * 60_000  # longer = a DJ mix, a podcast-like recording or a whole audiobook chapter
 _GENRE_DISALLOWED = re.compile(r"[^a-z0-9 &-]")
+# Audiobooks saved as tracks are named by chapter: "Das Buch, Kapitel 1", "Chapter 12", "Teil 3", "Folge 4"
+_AUDIOBOOK_TITLE = re.compile(
+    r"\b(kapitel|chapter|chapitre|cap[ií]tulo|capitolo|hoofdstuk|fejezet|teil|folge)\s*\d+", re.IGNORECASE
+)
+
+
+def is_audiobook_title(track: Track) -> bool:
+    """True for an audiobook chapter by its title; checked before any audio-feature lookup."""
+    return _AUDIOBOOK_TITLE.search(track.name) is not None
 
 
 def is_music(track: Track, features: AudioFeatures) -> bool:
-    """False for spoken word (audiobooks, podcasts saved as tracks) and very long recordings. Rap stays in: its
-    speechiness is typically 0.1-0.5."""
-    return features.speechiness <= MAX_SPEECHINESS and track.duration_ms <= MAX_TRACK_MS
+    """False for spoken word (audiobook chapters, podcasts saved as tracks) and very long recordings. Rap stays in:
+    its speechiness is typically 0.1-0.5."""
+    return (
+        features.speechiness <= MAX_SPEECHINESS and track.duration_ms <= MAX_TRACK_MS and not is_audiobook_title(track)
+    )
 
 
 # ─────────────────────────────── tempo ───────────────────────────────
@@ -122,11 +134,11 @@ class AssemblyParams(Frozen):
     tolerance_ladder_bpm: tuple[float, ...] = DEFAULT_TOLERANCE_LADDER_BPM
     bpm_error_weight: float = Field(default=0.5, ge=0, description="λ: penalty for a full-tolerance tempo error")
     mood_weight: float = Field(default=1.0, ge=0, description="strength of the MORE_ENERGETIC / CALMER shift")
-    novelty_target: float = Field(default=0.3, ge=0, le=1, description="minimum share of novel tracks, when possible")
+    novelty_target: float = Field(default=0.5, ge=0, le=1, description="minimum share of novel tracks, when possible")
     max_tracks_per_artist: int = Field(default=2, ge=1)
     jitter: float = Field(default=0.02, ge=0, description="random tie-breaking amplitude: variety across drafts")
     artist_bonus: float = Field(default=0.25, ge=0, description="added to a novel song's fit if its artist is familiar")
-    rotation_penalty: float = Field(default=0.3, ge=0, description="rank penalty per recent playlist it was in")
+    rotation_penalty: float = Field(default=0.3, ge=0, description="rank penalty per recent playlist it was in (reuse)")
 
     @model_validator(mode="after")
     def _ladder(self) -> Self:
@@ -170,7 +182,7 @@ def mood_term(features: AudioFeatures, mood: Mood, reference: MoodReference, wei
     return direction * weight * shift
 
 
-def _song_key(track: Track) -> tuple[str, str]:
+def song_key(track: Track) -> tuple[str, str]:
     """Same title by the same lead artist (single vs album version) counts as one song."""
     lead = track.artist_ids[0] if track.artist_ids else ""
     return " ".join(track.name.lower().split()), lead
@@ -223,7 +235,7 @@ class _GreedyFill:
         return pool[index] if index < len(pool) else None
 
     def _eligible(self, track: Track) -> bool:
-        if _song_key(track) in self._songs:
+        if song_key(track) in self._songs:
             return False
         return all(self._artists[artist] < self._params.max_tracks_per_artist for artist in track.artist_ids)
 
@@ -233,7 +245,7 @@ class _GreedyFill:
         self._cursor[ranked.scored.novel] += 1
         self.total_ms += track.duration_ms
         self.n_novel += ranked.scored.novel
-        self._songs.add(_song_key(track))
+        self._songs.add(song_key(track))
         self._artists.update(set(track.artist_ids))
 
 

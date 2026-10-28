@@ -4,17 +4,22 @@ Pipeline for one draft:
 
 1. **Positives** — tracks of the running playlists (weight 1) and tracks played *during runs* (+1 per play, capped):
    recently-played is synced into the local log first, then matched against the run windows.
-2. **Own pool** — positives + saved tracks. Spoken word (audiobook chapters saved as tracks) and very long recordings
-   are dropped here (`playlist.is_music`), so they neither get picked nor distort the style model.
-3. **Enrich** — audio features (ReccoBeats, cached) for everything; artist genres (Spotify, one call per artist,
-   cached) for positives and for tempo-eligible candidates only (a track outside ±8 BPM cannot be used anyway).
+2. **Own pool** — positives + saved tracks (kept for a while: most of a library can be audiobook chapters, so 300
+   songs can take dozens of pages). Spoken word (audiobook chapters saved as tracks, by title or speechiness) and
+   very long recordings are dropped here (`playlist.is_music`), so they neither get picked nor distort the style model.
+3. **Enrich** — audio features (ReccoBeats, cached) for everything; artist genres (Last.fm, cached) for positives and
+   for tempo-eligible candidates only (a track outside ±8 BPM cannot be used anyway). Artists on the blocklist
+   (classical, jazz, audiobooks, ...: `genres.is_off_limits`) get no genre.
 4. **Score** — fit the style model on positives vs. the rest. The *style floor* is a low quantile of the positives'
    own scores ("at least as running-like as one of the less typical favourites"); new songs below it are left out.
 5. **Assemble, level by level** — `playlist.assemble_playlist` (pure), first on the own pool with the floor; only if
    that cannot fill the run are recommendations fetched (seeded with the most typical favourites that fit the tempo)
-   and the floor lowered step by step. The first level that fills the duration wins. The `MusicChoice` picks the
-   levels: `familiar` never adds recommendations and keeps to the running music and its artists; `discover` starts
-   with recommendations and asks for more new songs. Songs of recently created playlists rank lower (rotation).
+   and the floor lowered step by step. The first level that fills the duration wins. At every level:
+   * **rotation**: no song of the last 3 created playlists (by id, and by title + lead artist for other versions);
+     only a last-resort level lets the oldest one's songs back in, ranked lower;
+   * **running genres only**: a new song (not in the running playlists) needs a known genre of the vocabulary;
+   * the `MusicChoice`: `familiar` = 0 % new (running playlists only, no recommendations), `usual` = at least 50 %
+     new, `discover` = 100 % new (recommendations from the start).
 
 Robustness: recommendations, search and genres are optional enrichments; if they fail the draft is built without
 them (logged). Missing audio features drop that track, nothing else. The running playlists are only read: this
@@ -25,7 +30,8 @@ from __future__ import annotations
 
 import logging
 import random
-from collections import defaultdict
+import time
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -49,7 +55,7 @@ from stridedj.domain import (
     TrackId,
 )
 from stridedj.errors import ExternalAPIError
-from stridedj.music.genres import genres_from_tags
+from stridedj.music.genres import genres_from_tags, is_off_limits
 from stridedj.music.playlist import (
     AssembledPlaylist,
     AssemblyParams,
@@ -57,8 +63,10 @@ from stridedj.music.playlist import (
     MoodReference,
     assemble_playlist,
     fold_tempo,
+    is_audiobook_title,
     is_music,
     sanitise_genre,
+    song_key,
 )
 from stridedj.music.plays_logger import PlaysLogger
 from stridedj.music.style import (
@@ -101,6 +109,9 @@ class ChainedTrackLookup:
 
 class PlannerSettings(Frozen):
     saved_tracks_limit: int = Field(default=300, ge=0)
+    saved_tracks_max_age_s: float = Field(
+        default=0.0, ge=0, description="reuse the saved tracks this long (the warm-up refreshes them); 0 = fetch always"
+    )
     recommendation_rounds: int = Field(default=2, ge=0, description="ReccoBeats calls, each with ≤ 5 distinct seeds")
     recommendations_per_round: int = Field(default=100, ge=1, le=100)
     search_genres: int = Field(default=3, ge=0)
@@ -115,17 +126,58 @@ class PlannerSettings(Frozen):
         default=(0.25, 0.10),
         description="style floors tried in order, as quantiles of the positives' scores; after them: no floor",
     )
-    rotation_playlists: int = Field(default=3, ge=0, description="created playlists whose tracks rank lower")
-    discover_novelty: float = Field(default=0.6, ge=0, le=1, description="minimum share of new songs for 'discover'")
+    rotation_playlists: int = Field(
+        default=3, ge=0, description="created playlists whose songs are left out (the oldest: except as a last resort)"
+    )
     assembly: AssemblyParams = AssemblyParams()
 
 
 @dataclass(frozen=True, slots=True)
 class _Level:
-    """One attempt: with or without recommendations, and which style floor (None = none)."""
+    """One attempt: with or without recommendations, which style floor (None = none), and whether the songs of the
+    oldest recent playlist may come back (the last resort)."""
 
     recommendations: bool
     floor_quantile: float | None
+    reuse_oldest: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _Rotation:
+    """The songs of the last created playlists, matched by id and by title + lead artist (another version of a song is
+    the same song). All are left out of a new playlist; at the last resort, those of the oldest one are allowed."""
+
+    uses: dict[TrackId, int]  # in how many of the recent playlists each track was: a reused song ranks lower
+    blocked: frozenset[TrackId]  # in any recent playlist
+    newer: frozenset[TrackId]  # in a recent playlist other than the oldest: left out even at the last resort
+    blocked_songs: frozenset[tuple[str, str]]
+    newer_songs: frozenset[tuple[str, str]]
+
+    @classmethod
+    def of(cls, recent: Sequence[Sequence[TrackId]], tracks: Mapping[TrackId, Track]) -> _Rotation:
+        """`recent`: the playlists' track ids, newest first; `tracks`: whatever of them could be resolved."""
+        newer = {track_id for playlist in recent[:-1] for track_id in playlist}
+        blocked = newer | set(recent[-1]) if recent else newer
+
+        def songs(ids: set[TrackId]) -> frozenset[tuple[str, str]]:
+            return frozenset(song_key(tracks[track_id]) for track_id in ids if track_id in tracks)
+
+        uses = Counter(track_id for playlist in recent for track_id in set(playlist))
+        return cls(
+            uses=dict(uses),
+            blocked=frozenset(blocked),
+            newer=frozenset(newer),
+            blocked_songs=songs(blocked),
+            newer_songs=songs(newer),
+        )
+
+    @property
+    def has_reusable(self) -> bool:
+        return self.blocked != self.newer
+
+    def allows(self, track: Track, *, reuse_oldest: bool) -> bool:
+        ids, songs = (self.newer, self.newer_songs) if reuse_oldest else (self.blocked, self.blocked_songs)
+        return track.track_id not in ids and song_key(track) not in songs
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +224,7 @@ class _DraftContext:
     positives: list[WeightedTrack]
     running: set[TrackId]
     familiar_artists: set[ArtistId]
-    recent_uses: dict[TrackId, int]
+    rotation: _Rotation
     genre: Genre | None  # the runner's genre choice: only songs of it
     excluded: set[TrackId]  # songs the runner disliked (👎): never candidates, seeds or positives
 
@@ -208,6 +260,7 @@ class PlaylistPlannerService:
         self._rng = random.Random(seed)  # noqa: S311 (not crypto: tie-breaking and draft ids)
         self._known: dict[TrackId, Track] = {}
         self._drafts: dict[DraftId, tuple[Track, ...]] = {}
+        self._saved: tuple[float, dict[TrackId, Track]] | None = None  # (monotonic time, tracks) of the last fetch
 
     # ── PlaylistPlanner ──
     async def draft(
@@ -231,7 +284,7 @@ class PlaylistPlannerService:
             if rating > 0:
                 weights[track_id] = max(weights.get(track_id, 0.0), self._settings.liked_weight)
         weights = {track_id: w for track_id, w in weights.items() if track_id not in excluded}
-        saved = self._remember(await self._library.saved_tracks(limit=self._settings.saved_tracks_limit))
+        saved = await self._saved_tracks()
         pool = {**saved, **(await self._resolve(list(weights))), **running}
         pool = {track_id: track for track_id, track in pool.items() if track_id not in excluded}
         features = await self._music_features(pool)
@@ -248,9 +301,7 @@ class PlaylistPlannerService:
             positives=positives,
             running=set(running),
             familiar_artists={artist for t in positive_ids for artist in pool[t].artist_ids},
-            recent_uses=dict(self._history.recent_track_uses(last_playlists=self._settings.rotation_playlists))
-            if self._history is not None
-            else {},
+            rotation=await self._rotation(),
             genre=genre,
             excluded=excluded,
         )
@@ -260,7 +311,7 @@ class PlaylistPlannerService:
         scored = await self._score_pool(pool, features, genres, budget, context)
         best: AssembledPlaylist | None = None
         extended, used_level = False, 0
-        for index, level in enumerate(self._levels(music, genre)):
+        for index, level in enumerate(self._levels(music, genre, reuse=context.rotation.has_reusable)):
             if level.recommendations and not extended:
                 extended = True
                 extra = await self._extra_candidates(positive_ids, features, scored, context, pool, seed)
@@ -268,13 +319,8 @@ class PlaylistPlannerService:
                     features |= await self._music_features(extra)
                     pool |= {track_id: track for track_id, track in extra.items() if track_id in features}
                     scored = await self._score_pool(pool, features, genres, budget, context)
-            candidates = scored.candidates
-            if music is MusicChoice.FAMILIAR:
-                candidates = [c for c in candidates if c.in_running_playlists or c.familiar_artist]
-            if genre is not None:
-                candidates = [c for c in candidates if genre.value in c.genres]
             assembled = assemble_playlist(
-                candidates,
+                self._usable(scored.candidates, level, music, context),
                 run_type=run_type,
                 target_spm=target_spm,
                 duration_min=duration_min,
@@ -291,26 +337,33 @@ class PlaylistPlannerService:
         if best is None:  # unreachable: every music choice has at least one level
             raise RuntimeError("no assembly level ran")
 
-        self._keep(best.draft.draft_id, best.tracks)
+        draft = best.draft.model_copy(
+            update={"requested_min": duration_min, "mood": mood, "music": music, "genre": genre}
+        )
+        self._keep(draft.draft_id, best.tracks)
         logger.info(
-            "playlist draft %s (%s%s, level %d): %d tracks, %.1f min, ±%.0f BPM, %d positives, %d candidates",
-            best.draft.draft_id,
+            "playlist draft %s (%s%s, level %d): %d tracks, %.1f min, ±%.0f BPM, %.0f%% new, %d positives, "
+            "%d candidates, %d recent songs left out",
+            draft.draft_id,
             music.value,
             f", {genre.value}" if genre else "",
             used_level,
             len(best.tracks),
-            best.draft.total_min,
-            best.draft.tolerance_bpm,
+            draft.total_min,
+            draft.tolerance_bpm,
+            100 * draft.novelty_share,
             len(positives),
             len(scored.candidates),
+            len(context.rotation.blocked),
         )
-        return best.draft
+        return draft
 
     async def warm_up(self) -> int:
         """Look up the genres of every library artist not known yet (running playlists first, then saved tracks), so
-        drafts rarely wait for the genre source. Meant for a background job; returns how many were looked up."""
+        drafts rarely wait for the genre source, and refresh the saved tracks the drafts reuse. Meant for a
+        background job; returns how many artists were looked up."""
         running = await self._running_tracks()
-        saved = self._remember(await self._library.saved_tracks(limit=self._settings.saved_tracks_limit))
+        saved = await self._saved_tracks(refresh=True)
         budget = _Budget(self._settings.max_warm_up_lookups)
         await self._fetch_genres([*running.values(), *saved.values()], {}, budget)
         return budget.used
@@ -325,6 +378,22 @@ class PlaylistPlannerService:
     async def tracks_of(self, track_ids: Sequence[TrackId]) -> Sequence[Track]:
         resolved = await self._resolve(list(track_ids))
         return [resolved[track_id] for track_id in track_ids if track_id in resolved]
+
+    # ── library and rotation ──
+    async def _saved_tracks(self, *, refresh: bool = False) -> dict[TrackId, Track]:
+        """The saved tracks, reused for `saved_tracks_max_age_s` (fetching them can take dozens of pages)."""
+        now = time.monotonic()
+        if not refresh and self._saved is not None and now - self._saved[0] < self._settings.saved_tracks_max_age_s:
+            return self._saved[1]
+        saved = self._remember(await self._library.saved_tracks(limit=self._settings.saved_tracks_limit))
+        self._saved = (now, saved)
+        return saved
+
+    async def _rotation(self) -> _Rotation:
+        if self._history is None:
+            return _Rotation.of([], {})
+        recent = self._history.recent_playlists(last=self._settings.rotation_playlists)
+        return _Rotation.of(recent, await self._resolve([track_id for playlist in recent for track_id in playlist]))
 
     # ── positives ──
     async def _running_tracks(self) -> dict[TrackId, Track]:
@@ -353,25 +422,49 @@ class PlaylistPlannerService:
         return {track_id: min(weight, cap) for track_id, weight in sorted(weights.items())}
 
     # ── levels ──
-    def _levels(self, music: MusicChoice, genre: Genre | None) -> list[_Level]:
+    def _levels(self, music: MusicChoice, genre: Genre | None, *, reuse: bool) -> list[_Level]:
         # a chosen genre IS the style: songs of it are ranked by fit, but none is rejected for sounding different
         floors: list[float | None] = [None] if genre else [*self._settings.style_floor_quantiles, None]
-        if music is MusicChoice.FAMILIAR:
-            return [_Level(recommendations=False, floor_quantile=q) for q in floors]
         with_recommendations = [_Level(recommendations=True, floor_quantile=q) for q in floors]
-        if music is MusicChoice.DISCOVER:
-            return with_recommendations
-        return [_Level(recommendations=False, floor_quantile=floors[0]), *with_recommendations]
+        if music is MusicChoice.FAMILIAR:
+            levels = [_Level(recommendations=False, floor_quantile=q) for q in floors]
+        elif music is MusicChoice.DISCOVER:
+            levels = with_recommendations
+        else:
+            levels = [_Level(recommendations=False, floor_quantile=floors[0]), *with_recommendations]
+        if reuse:  # the last resort: the oldest recent playlist's songs may come back, so the run is covered
+            last = levels[-1]
+            levels.append(
+                _Level(recommendations=last.recommendations, floor_quantile=last.floor_quantile, reuse_oldest=True)
+            )
+        return levels
 
     def _params(self, music: MusicChoice) -> AssemblyParams:
         params = self._settings.assembly
         if music is MusicChoice.FAMILIAR:
             return params.model_copy(update={"novelty_target": 0.0})
         if music is MusicChoice.DISCOVER:
-            return params.model_copy(
-                update={"novelty_target": max(params.novelty_target, self._settings.discover_novelty)}
-            )
+            return params.model_copy(update={"novelty_target": 1.0})
         return params
+
+    @staticmethod
+    def _usable(
+        candidates: Sequence[Candidate], level: _Level, music: MusicChoice, context: _DraftContext
+    ) -> list[Candidate]:
+        """The candidates one level may use: rotation, running genres for new songs, the music choice, the genre."""
+        usable = [
+            c
+            for c in candidates
+            if context.rotation.allows(c.track, reuse_oldest=level.reuse_oldest)
+            and (c.in_running_playlists or c.genres)  # a new song needs a known running genre
+        ]
+        if music is MusicChoice.FAMILIAR:
+            usable = [c for c in usable if c.in_running_playlists]
+        elif music is MusicChoice.DISCOVER:
+            usable = [c for c in usable if not c.in_running_playlists]
+        if context.genre is not None:
+            usable = [c for c in usable if context.genre.value in c.genres]
+        return usable
 
     async def _score_pool(
         self,
@@ -409,7 +502,7 @@ class PlaylistPlannerService:
                     style_score=score,
                     in_running_playlists=in_running,
                     familiar_artist=not in_running and any(a in context.familiar_artists for a in track.artist_ids),
-                    recent_uses=context.recent_uses.get(track.track_id, 0),
+                    recent_uses=context.rotation.uses.get(track.track_id, 0),
                 )
             )
         return _ScoredPool(
@@ -483,16 +576,18 @@ class PlaylistPlannerService:
     # ── enrichment ──
     async def _music_features(self, tracks: Mapping[TrackId, Track]) -> dict[TrackId, AudioFeatures]:
         """Audio features of the tracks that are music: spoken word, very long recordings and tracks without
-        features are left out (and so are dropped from everything downstream)."""
-        found = await self._features.audio_features(list(tracks))
-        return {t: f for t, f in found.items() if t in tracks and is_music(tracks[t], f)}
+        features are left out (and so are dropped from everything downstream). Audiobook chapters are recognised by
+        their title before the lookup."""
+        songs = {t: track for t, track in tracks.items() if not is_audiobook_title(track)}
+        found = await self._features.audio_features(list(songs))
+        return {t: f for t, f in found.items() if t in songs and is_music(songs[t], f)}
 
     async def _fetch_genres(
         self, tracks: Sequence[Track], genres: dict[ArtistId, tuple[str, ...]], budget: _Budget
     ) -> None:
-        """Genres of each track's lead artist, mapped onto the `Genre` vocabulary. Cached answers are free; the budget
-        counts network lookups only. After the first failure (a 429 should not be prolonged by more calls) only cached
-        answers are used; missing genres are simply unknown."""
+        """Genres of each track's lead artist, mapped onto the `Genre` vocabulary (none for an artist on the
+        blocklist). Cached answers are free; the budget counts network lookups only. After the first failure (a 429
+        should not be prolonged by more calls) only cached answers are used; missing genres are simply unknown."""
         for track in tracks:
             if not track.artist_ids or track.artist_ids[0] in genres:
                 continue
@@ -508,7 +603,7 @@ class PlaylistPlannerService:
                     logger.warning("artist genres unavailable, continuing with cached ones: %s", exc)
                     budget.exhaust()
                     continue
-            genres[artist_id] = tuple(g.value for g in genres_from_tags(raw))
+            genres[artist_id] = () if is_off_limits(raw) else tuple(g.value for g in genres_from_tags(raw))
 
     @staticmethod
     def _profile(track: Track, features: AudioFeatures, genres: Mapping[ArtistId, tuple[str, ...]]) -> TrackProfile:

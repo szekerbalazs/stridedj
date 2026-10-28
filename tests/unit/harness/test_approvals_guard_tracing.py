@@ -54,6 +54,26 @@ def test_approval_is_single_use(clock: FrozenClock) -> None:
         store.consume(token, user_id=UserId("tg:1"))
 
 
+def test_check_validates_without_burning_and_cancel_is_reported(clock: FrozenClock) -> None:
+    store = ApprovalStore(clock=clock)
+    token = store.issue(_plan(clock))
+    assert store.check(token, user_id=UserId("tg:1")).plan_id == "p1"
+    with pytest.raises(ApprovalError, match="only the person"):
+        store.check(token, user_id=UserId("tg:2"))
+    store.cancel(token, user_id=UserId("tg:1"))
+    with pytest.raises(ApprovalError, match="cancelled or replaced"):
+        store.consume(token, user_id=UserId("tg:1"))
+
+
+def test_an_approved_token_stays_approved_after_a_late_cancel(clock: FrozenClock) -> None:
+    store = ApprovalStore(clock=clock)
+    token = store.issue(_plan(clock))
+    store.consume(token, user_id=UserId("tg:1"))
+    store.cancel(token, user_id=UserId("tg:1"))
+    with pytest.raises(ApprovalError, match="already approved"):
+        store.check(token, user_id=UserId("tg:1"))
+
+
 def test_approval_expires(clock: FrozenClock) -> None:
     store = ApprovalStore(clock=clock, ttl=timedelta(minutes=15))
     token = store.issue(_plan(clock))

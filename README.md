@@ -38,7 +38,8 @@ Approving creates the calendar event and a private Spotify playlist.
 - Calendar slots sized to the 80th percentile of your running time, from free/busy only
 - Interval sessions detected in your history from per-second pace, watch stops and heart rate
 - Session options at target paces that adapt to your results
-- Playlists from your own library, tempo-matched to your cadence, with genre, novelty and feedback options
+- Playlists from your own library, tempo-matched to your cadence, running genres only, with genre, mood and feedback options
+- A different playlist every run (no song of the last 3), with 0 / 50 / 100 % new songs at a tap
 - Read-only tools for the model; writes only after an explicit approval
 - 45 programmatic eval tasks, including prompt-injection attacks
 

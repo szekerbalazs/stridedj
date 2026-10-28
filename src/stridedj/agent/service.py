@@ -2,12 +2,15 @@
 
 handle(user, text) → run the agent loop with this user's tools → if it proposed a plan: issue an approval token
 approve(token, user) → consume the token (bound, single-use, unexpired) → execute the exact plan
+redraft(token, user, music) → the same plan with only its playlist rebuilt (no model call) → a new token
 cancel(token, user)
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,17 +19,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from stridedj.agent.placeholders import render_offer_message, render_proposal_message
 from stridedj.agent.session import AgentSession
-from stridedj.agent.tools import MAX_DAYS_AHEAD, AgentDeps, build_tools
+from stridedj.agent.tools import DRAFT_TIMEOUT_S, MAX_DAYS_AHEAD, AgentDeps, build_tools
 from stridedj.costs.ledger import UsageSink
 from stridedj.domain import (
     AgentReply,
     ExecutionResult,
     IntervalSession,
+    MusicChoice,
+    PlanId,
     ReplyKind,
     RunPlan,
     UserContext,
     UserId,
 )
+from stridedj.errors import ApprovalError
 from stridedj.harness.approvals import ApprovalStore
 from stridedj.harness.context import Prompt, compose_instructions, history_items
 from stridedj.harness.executor import PlanExecutor
@@ -160,6 +166,38 @@ class StrideAgent:
         result = await self._executor.execute(plan)
         log.info("plan %s executed (errors: %d)", plan.plan_id, len(result.errors))
         return result
+
+    async def redraft(self, token: str, *, user_id: UserId, music: MusicChoice) -> tuple[RunPlan, str]:
+        """Rebuild only the playlist of a proposed plan with another music choice (the bot's 0 / 50 / 100 % new
+        buttons): same run, slot, cadence, length, mood and genre, no model call. Returns the new plan and its token;
+        the old token is cancelled only once the new playlist exists, so a failed draft leaves the old card usable.
+        Raises `ApprovalError` (token no longer valid), `TimeoutError` or a `StrideDJError` from the music services."""
+        plan = self._approvals.check(token, user_id=user_id)
+        old = plan.playlist
+        if old is None:
+            raise ApprovalError("this plan has no playlist")
+        draft = await asyncio.wait_for(
+            self._deps.playlists.draft(
+                run_type=plan.run_type,
+                cadence=plan.cadence,
+                duration_min=old.requested_min or plan.duration.p80_min,
+                mood=old.mood,
+                music=music,
+                genre=old.genre,
+            ),
+            timeout=DRAFT_TIMEOUT_S,
+        )
+        self._approvals.check(token, user_id=user_id)  # still open? (Approve may have been tapped meanwhile)
+        new = plan.model_copy(
+            update={"plan_id": PlanId(uuid.uuid4().hex[:12]), "playlist": draft, "created_at": self._deps.clock.now()}
+        )
+        self._approvals.cancel(token, user_id=user_id)
+        new_token = self._approvals.issue(new)
+        if (session := self._sessions.get(user_id)) is not None:
+            session.state.drafts[draft.draft_id] = draft
+            session.state.plans[new.plan_id] = new
+        log.info("plan %s: playlist redrafted (%s) as plan %s", plan.plan_id, music.value, new.plan_id)
+        return new, new_token
 
     def cancel(self, token: str, *, user_id: UserId) -> None:
         self._approvals.cancel(token, user_id=user_id)

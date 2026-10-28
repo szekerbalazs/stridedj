@@ -14,6 +14,7 @@ from stridedj.music.playlist import (
     MoodReference,
     assemble_playlist,
     fold_tempo,
+    is_audiobook_title,
     is_music,
     sanitise_genre,
     summarise,
@@ -169,8 +170,8 @@ def test_novelty_quota_is_met_when_possible() -> None:
     familiar = [_candidate(i, style=0.9, familiar=True) for i in range(20)]
     novel = [_candidate(100 + i, style=0.1, familiar=False) for i in range(20)]
     draft = _assemble(familiar + novel, duration_min=40).draft
-    assert draft.novelty_share >= 0.3
-    assert draft.novelty_share < 0.5  # the quota is a floor, not a preference for novelty
+    assert draft.novelty_share >= 0.5
+    assert draft.novelty_share < 0.6  # the quota is a floor, not a preference for novelty
 
     only_familiar = _assemble(familiar, duration_min=40).draft
     assert only_familiar.novelty_share == 0.0
@@ -235,6 +236,28 @@ def test_is_music_drops_spoken_word_and_very_long_recordings_but_keeps_rap() -> 
     assert not is_music(song.track, song.features.model_copy(update={"speechiness": 0.94}))  # audiobook chapter
     assert is_music(song.track, song.features.model_copy(update={"speechiness": 0.45}))  # rap
     assert not is_music(song.track.model_copy(update={"duration_ms": 60 * 60_000}), song.features)  # a 1-hour mix
+
+
+@pytest.mark.parametrize(
+    ("name", "chapter"),
+    [
+        ("Das Buch, Kapitel 1", True),
+        ("Kapitel 12.3 - Der Anruf", True),
+        ("Chapter 7", True),
+        ("Capítulo 3", True),
+        ("Folge 4: Der Fall", True),
+        ("Teil 2", True),
+        ("Mr. Brightside", False),
+        ("Part of Me", False),
+        ("Teilzeit 2", False),  # whole words only
+        ("Chapter One", False),  # a song title, no chapter number
+    ],
+)
+def test_audiobook_chapters_are_recognised_by_their_title(name: str, chapter: bool) -> None:
+    song = _candidate(1)
+    track = song.track.model_copy(update={"name": name})
+    assert is_audiobook_title(track) is chapter
+    assert is_music(track, song.features) is not chapter  # even with music-like audio features
 
 
 def test_style_floor_drops_new_songs_below_it_but_never_favourites() -> None:

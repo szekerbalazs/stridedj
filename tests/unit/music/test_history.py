@@ -19,21 +19,21 @@ def _draft(draft_id: str, *tracks: str) -> PlaylistDraft:
     )
 
 
-def test_recent_track_uses_counts_only_the_last_playlists() -> None:
+def test_recent_playlists_are_the_last_ones_newest_first() -> None:
     history = PlaylistHistory(Path(":memory:"))
     history.record_created(_draft("d1", "a", "b"))
     history.record_created(_draft("d2", "b", "c"))
     history.record_created(_draft("d3", "c", "d"))
-    assert history.recent_track_uses(last_playlists=2) == {"b": 1, "c": 2, "d": 1}
-    assert history.recent_track_uses(last_playlists=10) == {"a": 1, "b": 2, "c": 2, "d": 1}
-    assert history.recent_track_uses(last_playlists=0) == {}
+    assert history.recent_playlists(last=2) == [("c", "d"), ("b", "c")]
+    assert history.recent_playlists(last=10) == [("c", "d"), ("b", "c"), ("a", "b")]
+    assert history.recent_playlists(last=0) == []
 
 
 def test_recording_the_same_draft_twice_is_a_no_op() -> None:
     history = PlaylistHistory(Path(":memory:"))
     history.record_created(_draft("d1", "a", "b"))
     history.record_created(_draft("d1", "a", "b"))  # e.g. the executor retried
-    assert history.recent_track_uses(last_playlists=5) == {"a": 1, "b": 1}
+    assert history.recent_playlists(last=5) == [("a", "b")]
 
 
 def test_history_persists_across_instances(tmp_path: Path) -> None:
@@ -41,4 +41,4 @@ def test_history_persists_across_instances(tmp_path: Path) -> None:
     first = PlaylistHistory(path)
     first.record_created(_draft("d1", "a"))
     first.close()
-    assert PlaylistHistory(path).recent_track_uses(last_playlists=3) == {"a": 1}
+    assert PlaylistHistory(path).recent_playlists(last=3) == [("a",)]

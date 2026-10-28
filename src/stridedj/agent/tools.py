@@ -51,6 +51,9 @@ from stridedj.ports import Clock, PlaylistPlanner, RunInsights, SlotFinder
 from stridedj.runs.sessions import interval_session_distance
 
 MAX_DAYS_AHEAD = 14
+# Drafts on a real library took 13-29 s, too close to the 30 s default (Spotify paging, ReccoBeats, Last.fm at ~3
+# lookups/s); 60 s still leaves the 90 s turn budget room for the model calls.
+DRAFT_TIMEOUT_S = 60.0
 _CLOCK_TIME = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 RUN_TYPE_HELP = "z1..z5 = the runner's own heart-rate zones (z2 = easy), 'intervals' = a structured interval session"
 
@@ -179,8 +182,8 @@ class DraftPlaylistArgs(Frozen):
     duration_min: float = Field(description="music length in minutes: pass p80_min from estimate_duration")
     mood: Mood = Field(description="'usual' unless the runner asks for more energetic or calmer music")
     music: MusicChoice = Field(
-        description="where the songs come from: 'usual' unless the runner asks otherwise; 'familiar' = only songs "
-        "they know (their running playlists and those artists); 'discover' = more new songs in their style"
+        description="where the songs come from: 'usual' (at least half new songs) unless the runner asks otherwise; "
+        "'familiar' = 0% new, only songs of their running playlists; 'discover' = 100% new songs in their style"
     )
     genre: Genre | None = Field(
         default=None,
@@ -524,6 +527,7 @@ def build_tools(deps: AgentDeps, session: AgentSession) -> ToolRegistry:
                 "estimate_duration as duration_min. Returns a draft_id, stats and the cadence target.",
                 DraftPlaylistArgs,
                 draft_playlist,
+                timeout_s=DRAFT_TIMEOUT_S,
             ),
             Tool(
                 "propose_plan",

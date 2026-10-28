@@ -209,12 +209,16 @@ class SpotifyClient:
         return genres
 
     async def search_tracks(self, query: str, *, limit: int) -> Sequence[Track]:
-        """Track search, paged 10 at a time (the Feb 2026 maximum) up to `limit` results."""
+        """Track search, paged 10 at a time (the Feb 2026 maximum) up to `limit` results.
+
+        No `market` parameter: `/search` with `market=from_token` answers 403 "Insufficient client scope" without the
+        `user-read-private` scope (account data we don't ask for; seen Oct 2026). Per Spotify's docs, the country of
+        the account behind a user token takes priority over `market` anyway."""
         tracks: list[Track] = []
         offset = 0
         while len(tracks) < limit and offset <= SEARCH_MAX_OFFSET:
             page_size = min(SEARCH_PAGE_LIMIT, limit - len(tracks))
-            params = {"q": query, "type": "track", "limit": page_size, "offset": offset, "market": "from_token"}
+            params = {"q": query, "type": "track", "limit": page_size, "offset": offset}
             container = (await self._get_json("/search", params=params)).get("tracks") or {}
             items = container.get("items") or []
             tracks.extend(track for item in items if (track := track_from_json(item)))

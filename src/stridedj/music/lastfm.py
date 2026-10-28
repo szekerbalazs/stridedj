@@ -6,8 +6,9 @@ key, 29 = rate limit; "several calls per second" can get a key suspended, and re
 User-Agent. So calls are spaced ≥ 0.35 s apart and every answer is cached per artist for 90 days (a miss for 30).
 
 Tags are untrusted text (any Last.fm user can tag an artist): they are mapped onto the closed `Genre` vocabulary right
-here and never leave this module as free text. The API key travels only as a query parameter, which our HTTP layer
-never puts into error messages or logs.
+here and never leave this module as free text. An artist whose top tags are on the blocklist (classical, audiobook,
+jazz, ...: `genres.is_off_limits`) gets no genre at all, so the planner's running-genres rule leaves its songs out.
+The API key travels only as a query parameter, which our HTTP layer never puts into error messages or logs.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from stridedj.domain import ArtistId, Genre
 from stridedj.errors import AuthError, ExternalAPIError, RateLimitedError
 from stridedj.http import RetryPolicy, Sleep, request_with_retries
 from stridedj.music.cache import JsonCache
-from stridedj.music.genres import genres_from_tags
+from stridedj.music.genres import genres_from_tags, is_off_limits
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,8 @@ class LastFmClient:
             genres: tuple[Genre, ...] = ()
             ttl_s = MISSING_TTL_S
         else:
-            genres = genres_from_tags(parse_top_tags(payload))
+            tags = parse_top_tags(payload)
+            genres = () if is_off_limits(tags) else genres_from_tags(tags)
             ttl_s = GENRES_TTL_S
         if self._cache:
             self._cache.set(_key(artist_id), [g.value for g in genres], ttl_s=ttl_s)
@@ -144,4 +146,4 @@ class LastFmClient:
 
 
 def _key(artist_id: ArtistId) -> str:
-    return f"lastfm:genres:{artist_id}"
+    return f"lastfm:genres:v2:{artist_id}"  # v2: with the blocklist (v1 answers are looked up again)

@@ -45,7 +45,8 @@ def render_proposal(plan: RunPlan, tracks: Sequence[Track], tz: ZoneInfo, *, ric
         lines.append("🎵 no playlist")
     else:
         genres = f" · {', '.join(p.top_genres)}" if p.top_genres else ""
-        stats = f"{len(p.track_ids)} tracks · {p.total_min:.0f} min · ±{p.mean_abs_bpm_error:.1f} BPM"
+        n_new = round(p.novelty_share * len(p.track_ids))
+        stats = f"{len(p.track_ids)} tracks · {n_new} new · {p.total_min:.0f} min · ±{p.mean_abs_bpm_error:.1f} BPM"
         lines.append(f"🎵 {stats}{_esc(genres, rich)}")
         for i, track in enumerate(tracks[:MAX_TRACKS_SHOWN], start=1):
             artists = ", ".join(track.artist_names)

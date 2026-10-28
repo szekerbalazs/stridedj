@@ -41,7 +41,8 @@ class ApprovalStore:
         self._ttl = ttl
         self._approvals: dict[str, Approval] = {}
         self._plans: dict[PlanId, RunPlan] = {}
-        self._used: set[str] = set()
+        self._used: set[str] = set()  # approved
+        self._cancelled: set[str] = set()  # cancelled, or replaced by a redrafted plan
 
     def issue(self, plan: RunPlan) -> str:
         token = secrets.token_urlsafe(16)
@@ -61,11 +62,19 @@ class ApprovalStore:
 
     def consume(self, token: str, *, user_id: UserId) -> RunPlan:
         """Validate and burn the token; return the exact plan it was issued for. Raises `ApprovalError`."""
+        plan = self.check(token, user_id=user_id)
+        self._used.add(token)
+        return plan
+
+    def check(self, token: str, *, user_id: UserId) -> RunPlan:
+        """Validate the token without burning it (e.g. before replacing its plan); raises `ApprovalError`."""
         approval = self._approvals.get(token)
         if approval is None:
             raise ApprovalError("unknown approval")
         if token in self._used:
             raise ApprovalError("this plan was already approved")
+        if token in self._cancelled:
+            raise ApprovalError("this proposal was cancelled or replaced by a newer one")
         if self._clock.now() > approval.expires_at:
             raise ApprovalError("this proposal expired; ask again")
         if user_id != approval.user_id:
@@ -73,13 +82,12 @@ class ApprovalStore:
         plan = self._plans.get(approval.plan_id)
         if plan is None or plan.content_hash() != approval.plan_hash:
             raise ApprovalError("the plan changed after it was proposed; ask again")
-        self._used.add(token)
         return plan
 
     def cancel(self, token: str, *, user_id: UserId) -> None:
         approval = self._approvals.get(token)
-        if approval is not None and approval.user_id == user_id:
-            self._used.add(token)
+        if approval is not None and approval.user_id == user_id and token not in self._used:
+            self._cancelled.add(token)
 
     def purge_expired(self, now: datetime | None = None) -> int:
         cutoff = now or self._clock.now()

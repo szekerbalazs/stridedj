@@ -44,7 +44,7 @@ async def test_a_created_playlist_is_recorded_for_rotation() -> None:
     result = await executor.execute(plan)
     assert result.playlist_url is not None
     assert plan.playlist is not None
-    assert history.recent_track_uses(last_playlists=1) == {t: 1 for t in plan.playlist.track_ids}
+    assert history.recent_playlists(last=1) == [plan.playlist.track_ids]
 
 
 async def test_a_playlist_that_failed_is_not_recorded() -> None:
@@ -52,7 +52,7 @@ async def test_a_playlist_that_failed_is_not_recorded() -> None:
     executor = PlanExecutor(calendar=InMemoryCalendar(), playlists=_FailingWriter(), tz=TZ, history=history)
     result = await executor.execute(plan)
     assert result.playlist_url is None and result.errors
-    assert history.recent_track_uses(last_playlists=1) == {}
+    assert history.recent_playlists(last=1) == []
 
 
 async def test_background_sync_survives_a_failing_round() -> None:

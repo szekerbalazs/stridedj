@@ -11,7 +11,6 @@ Only ids are stored: draft id, run type, track ids in order, ratings. No titles,
 from __future__ import annotations
 
 import sqlite3
-from collections import Counter
 from collections.abc import Set
 from pathlib import Path
 
@@ -83,16 +82,10 @@ class PlaylistHistory:
             )
         self._db.commit()
 
-    def recent_track_uses(self, *, last_playlists: int) -> dict[TrackId, int]:
-        """In how many of the last `last_playlists` created playlists each track was."""
-        rows = self._db.execute(
-            """
-            SELECT t.track_id FROM playlist_tracks t
-            JOIN (SELECT draft_id FROM playlists ORDER BY seq DESC LIMIT ?) p ON p.draft_id = t.draft_id
-            """,
-            (max(0, last_playlists),),
-        ).fetchall()
-        return dict(Counter(TrackId(track_id) for (track_id,) in rows))
+    def recent_playlists(self, *, last: int) -> list[tuple[TrackId, ...]]:
+        """The tracks of the last `last` created playlists (each in order), newest playlist first."""
+        drafts = self._db.execute("SELECT draft_id FROM playlists ORDER BY seq DESC LIMIT ?", (max(0, last),))
+        return [self.track_ids(draft_id) for (draft_id,) in drafts.fetchall()]
 
     def track_ids(self, draft_id: str) -> tuple[TrackId, ...]:
         """The tracks of a created playlist in order; empty if StrideDJ never created it."""

@@ -142,8 +142,8 @@ class PlaylistHistoryPort(Protocol):
 
     def record_created(self, draft: PlaylistDraft) -> None: ...
 
-    def recent_track_uses(self, *, last_playlists: int) -> Mapping[TrackId, int]:
-        """In how many of the last `last_playlists` created playlists each track was."""
+    def recent_playlists(self, *, last: int) -> Sequence[Sequence[TrackId]]:
+        """The tracks of the last `last` created playlists, newest playlist first."""
         ...
 
     def track_ids(self, draft_id: str) -> Sequence[TrackId]: ...

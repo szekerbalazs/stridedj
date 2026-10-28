@@ -7,6 +7,11 @@ world). A tag that maps to nothing is dropped.
 
 Matching: the normalised tag is looked up exactly ("deutschrap" → hip hop); otherwise the longest known synonym that
 occurs in it as whole words decides ("melodic deep house" → house, "swedish house" → house); otherwise nothing.
+
+Blocklist: an artist is off limits for running playlists when one of its top tags is a genre that is not for running
+(classical, soundtrack, ambient, audiobook, jazz, folk, lo-fi, country, ...; the runner's choice). Only the top tags
+count, and only exact matches ("blues" is blocked, "blues rock" is not; "rhythm and blues" is r&b), so an occasional
+"chillout" tag on a house artist does not block it.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from collections.abc import Iterable
 from stridedj.domain import Genre
 
 MAX_GENRES_PER_ARTIST = 3
+OFF_LIMITS_TOP_TAGS = 3  # how many of an artist's most important tags the blocklist looks at
 
 _SYNONYMS: dict[Genre, tuple[str, ...]] = {
     Genre.TECHNO: (
@@ -135,7 +141,7 @@ _SYNONYMS: dict[Genre, tuple[str, ...]] = {
         "pop rock",
         "stoner rock",
     ),
-    Genre.INDIE: ("indie", "indie pop", "indie rock", "indie folk", "indietronica"),
+    Genre.INDIE: ("indie", "indie pop", "indie rock", "indietronica"),
     Genre.METAL: (
         "metal",
         "heavy metal",
@@ -165,8 +171,158 @@ _SYNONYMS: dict[Genre, tuple[str, ...]] = {
     ),
     Genre.FUNK_DISCO: ("funk", "disco", "nu disco", "boogie"),
     Genre.REGGAE: ("reggae", "dancehall", "ska", "dub"),
-    Genre.COUNTRY: ("country", "country pop", "americana", "bluegrass"),
 }
+# The blocklist, by the runner's groups. Normalised tags (see `normalise_tag`: "Hörbuch" → "horbuch").
+_OFF_LIMITS_GROUPS: dict[str, tuple[str, ...]] = {
+    "classical, film and stage": (
+        "classical",
+        "classical music",
+        "contemporary classical",
+        "modern classical",
+        "neoclassical",
+        "neo classical",
+        "baroque",
+        "orchestral",
+        "orchestra",
+        "opera",
+        "operetta",
+        "choral",
+        "choir",
+        "chamber music",
+        "string quartet",
+        "early music",
+        "composer",
+        "composers",
+        "piano",
+        "solo piano",
+        "soundtrack",
+        "soundtracks",
+        "original soundtrack",
+        "ost",
+        "score",
+        "film score",
+        "film music",
+        "video game music",
+        "game music",
+        "musical",
+        "musicals",
+        "broadway",
+        "show tunes",
+        "disney",
+    ),
+    "ambient, relaxation, children, christmas": (
+        "ambient",
+        "dark ambient",
+        "drone",
+        "new age",
+        "meditation",
+        "relaxation",
+        "relaxing",
+        "relax",
+        "sleep",
+        "sleep music",
+        "healing",
+        "nature sounds",
+        "white noise",
+        "binaural",
+        "spa",
+        "yoga",
+        "lullaby",
+        "lullabies",
+        "children",
+        "childrens music",
+        "kids",
+        "kids music",
+        "kinderlieder",
+        "kindermusik",
+        "christmas",
+        "christmas music",
+        "xmas",
+        "weihnachten",
+        "weihnachtslieder",
+    ),
+    "audiobooks and other spoken word": (
+        "spoken word",
+        "spoken",
+        "speech",
+        "audiobook",
+        "audiobooks",
+        "audio book",
+        "horbuch",
+        "hoerbuch",
+        "horbucher",
+        "horspiel",
+        "hoerspiel",
+        "audio drama",
+        "lesung",
+        "podcast",
+        "comedy",
+        "stand up comedy",
+        "standup comedy",
+        "kabarett",
+        "poetry",
+    ),
+    "jazz and blues": (
+        "jazz",
+        "smooth jazz",
+        "vocal jazz",
+        "jazz vocal",
+        "cool jazz",
+        "bebop",
+        "hard bop",
+        "free jazz",
+        "jazz fusion",
+        "latin jazz",
+        "acid jazz",
+        "nu jazz",
+        "swing",
+        "big band",
+        "blues",
+        "delta blues",
+        "chicago blues",
+        "bossa nova",
+    ),
+    "folk and acoustic": (
+        "folk",
+        "folk rock",
+        "folk pop",
+        "indie folk",
+        "contemporary folk",
+        "freak folk",
+        "traditional folk",
+        "celtic",
+        "irish folk",
+        "singer songwriter",
+        "acoustic",
+    ),
+    "lo-fi and chillout": (
+        "lo fi",
+        "lofi",
+        "lo fi hip hop",
+        "lofi hip hop",
+        "chillhop",
+        "chillout",
+        "chill out",
+        "downtempo",
+        "lounge",
+        "trip hop",
+        "triphop",
+        "chillwave",
+        "easy listening",
+    ),
+    "country": (
+        "country",
+        "country pop",
+        "country rock",
+        "alt country",
+        "contemporary country",
+        "outlaw country",
+        "americana",
+        "bluegrass",
+        "honky tonk",
+    ),
+}
+_OFF_LIMITS: frozenset[str] = frozenset(tag for tags in _OFF_LIMITS_GROUPS.values() for tag in tags)
 _EXACT: dict[str, Genre] = {synonym: genre for genre, synonyms in _SYNONYMS.items() for synonym in synonyms}
 _BY_LENGTH: list[tuple[re.Pattern[str], Genre]] = [
     (re.compile(rf"(?<![a-z0-9&]){re.escape(synonym)}(?![a-z0-9&])"), _EXACT[synonym])
@@ -193,6 +349,11 @@ def genre_of_tag(raw: str) -> Genre | None:
         if pattern.search(tag):
             return genre
     return None
+
+
+def is_off_limits(tags: Iterable[str], *, top: int = OFF_LIMITS_TOP_TAGS) -> bool:
+    """True if one of the first `top` tags (most important first) is on the blocklist (exact, after normalising)."""
+    return any(normalise_tag(tag) in _OFF_LIMITS for tag in list(tags)[:top])
 
 
 def genres_from_tags(tags: Iterable[str], *, limit: int = MAX_GENRES_PER_ARTIST) -> tuple[Genre, ...]:

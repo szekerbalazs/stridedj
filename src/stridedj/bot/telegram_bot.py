@@ -5,7 +5,8 @@ webhook secret to manage, and the container needs no inbound port. A webhook is 
 hosting or many users (see docs/HOSTING.md).
 
 Per message: guard (private chat, allowlist, secret detection, length, rate) → agent → reply rendered by code.
-Buttons carry only a random approval token (`a:<token>` / `c:<token>`, under Telegram's 64-byte limit), an interval
+Buttons carry only a random approval token (`a:<token>` / `c:<token>`, under Telegram's 64-byte limit), the token and
+a music choice (`m:<token>:d`: 0 / 50 / 100 % new songs, the playlist is redrafted in code, no model call), an interval
 session id (`x:i2`: a tap becomes a code-made message to the agent), or, under a created playlist, a draft id and a
 song position for feedback (`bot/feedback.py`).
 
@@ -42,8 +43,8 @@ from stridedj.bot.feedback import (
     song_buttons,
 )
 from stridedj.bot.render import render_execution, render_proposal, session_button_label
-from stridedj.domain import ReplyKind, TrackId, UserContext, UserId
-from stridedj.errors import ApprovalError
+from stridedj.domain import MusicChoice, ReplyKind, RunPlan, TrackId, UserContext, UserId
+from stridedj.errors import ApprovalError, StrideDJError
 from stridedj.harness.guard import InputGuard
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,11 @@ log = logging.getLogger(__name__)
 _SESSION_ID = re.compile(r"^i\d{1,3}$")  # interval session ids are code-made: i1, i2, ...
 PLAYS_SYNC_EVERY_S = 30 * 60  # 50 plays ≈ 3 hours of listening: every 30 min loses nothing
 RUNS_REFRESH_EVERY_S = 30 * 60  # a finished run is known within half an hour (one Garmin list call per round)
+MUSIC_BUTTONS: tuple[tuple[str, MusicChoice, str], ...] = (  # callback code, choice, label
+    ("f", MusicChoice.FAMILIAR, "0% new"),
+    ("u", MusicChoice.USUAL, "50% new"),
+    ("d", MusicChoice.DISCOVER, "100% new"),
+)
 
 WELCOME = (
     "Hi! I'm StrideDJ. Tell me what you want to run, e.g. <i>10k Z2 tonight</i> or "
@@ -183,8 +189,7 @@ class TelegramBot:
         if response.reply.kind is ReplyKind.PROPOSAL and response.plan is not None and response.approval_token:
             tracks = await self._s.playlists.tracks_for(response.plan.playlist) if response.plan.playlist else []
             card = render_proposal(response.plan, tracks, user.tz, rich=True)
-            token = response.approval_token
-            keyboard = _markup([[("✅ Approve", f"a:{token}"), ("✖ Cancel", f"c:{token}")]])
+            keyboard = _markup(proposal_buttons(response.plan, response.approval_token))
             await chat.send_message(f"{reply}\n\n{card}", parse_mode=ParseMode.HTML, reply_markup=keyboard)
         elif response.session_options:
             options = [[(session_button_label(o), f"x:{o.session_id}")] for o in response.session_options]
@@ -213,6 +218,37 @@ class TelegramBot:
         await chat.send_message(f"➡️ {html.escape(session_button_label(picked), quote=False)}")
         await self._converse(chat, query.from_user.id, text)
 
+    async def _on_music_pick(self, query: CallbackQuery, chat: Chat) -> None:
+        """0 / 50 / 100 % new songs: the same plan with only its playlist redrafted (no model call), sent as a new card
+        with new buttons. The old card keeps its buttons until the new one exists (a failed draft changes nothing)."""
+        head, _, code = (query.data or "").rpartition(":")
+        token = head.removeprefix("m:")
+        picked = next(((choice, label) for c, choice, label in MUSIC_BUTTONS if c == code), None)
+        if not self._guard.is_allowed(query.from_user.id) or picked is None:
+            await query.answer()
+            return
+        music, label = picked
+        await query.answer(f"Building a playlist with {label} songs…")
+        await chat.send_action(ChatAction.TYPING)
+        user = self._user(query.from_user.id)
+        try:
+            plan, new_token = await self._s.agent.redraft(token, user_id=user.user_id, music=music)
+        except ApprovalError as exc:
+            await chat.send_message(f"Can't change the playlist: {exc}")
+            return
+        except (TimeoutError, StrideDJError) as exc:
+            log.warning("playlist redraft failed: %r", exc)
+            await chat.send_message("The music services are slow right now. The plan above still stands; try again.")
+            return
+        await query.edit_message_reply_markup(reply_markup=None)
+        tracks = await self._s.playlists.tracks_for(plan.playlist) if plan.playlist else []
+        card = render_proposal(plan, tracks, user.tz, rich=True)
+        await chat.send_message(
+            f"Same run, new playlist ({label} songs).\n\n{card}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_markup(proposal_buttons(plan, new_token)),
+        )
+
     async def _on_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query, chat = update.callback_query, update.effective_chat
         if query is None or query.data is None or query.from_user is None or chat is None:
@@ -222,6 +258,9 @@ class TelegramBot:
             return
         if query.data.startswith("x:"):
             await self._on_session_pick(query, chat)
+            return
+        if query.data.startswith("m:"):
+            await self._on_music_pick(query, chat)
             return
         await query.answer()
         action, _, token = query.data.partition(":")
@@ -303,6 +342,19 @@ async def sync_forever(sync: Callable[[], Awaitable[int]], *, every_s: float, fi
         except Exception:
             log.exception("background refresh failed; retrying at the next round")
         await asyncio.sleep(every_s)
+
+
+def proposal_buttons(plan: RunPlan, token: str) -> list[list[Button]]:
+    """Approve / Cancel, and above them for a plan with a playlist: 0 / 50 / 100 % new. The current choice is ticked;
+    tapping it again draws another playlist of the same kind."""
+    rows: list[list[Button]] = []
+    if plan.playlist is not None:
+        current = plan.playlist.music
+        rows.append(
+            [(("✓ " if choice is current else "") + label, f"m:{token}:{c}") for c, choice, label in MUSIC_BUTTONS]
+        )
+    rows.append([("✅ Approve", f"a:{token}"), ("✖ Cancel", f"c:{token}")])
+    return rows
 
 
 def _markup(rows: list[list[Button]]) -> InlineKeyboardMarkup:
