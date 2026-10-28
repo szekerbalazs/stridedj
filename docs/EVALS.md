@@ -73,6 +73,7 @@ uv run python -m evals.view evals/runs/<run>/<task>__t0.json
 | v2 | 100 % | 100 % (pass^3 100 %) | 100 % (0/18) | $0.040 | 5.5 s / 11.5 s |
 | v3 (38 tasks incl. c12–c17) | 100 % | 100 % (pass^3 100 %) | 100 % (0/18) | $0.061 | 6.5 s / 14.0 s |
 | v4 (45 tasks, + `message_template`) | 100 % | 96–97 % (pass^3 88–92 %) | 100 % (0/18) | $0.04–0.09 | 7–14 s / 16–30 s |
+| v5 (45 tasks) | 100 % | 99 % (pass^3 96 %) | 100 % (0/18) | $0.094 | 6.7 s / 17.8 s |
 
 The six tasks added with v3 come from real use (step 1 above). Before the fix they passed 2/18 trials, after it 18/18.
 

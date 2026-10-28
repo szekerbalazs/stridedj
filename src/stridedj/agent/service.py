@@ -43,7 +43,7 @@ from stridedj.llm.base import LLMClient
 log = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
-DEFAULT_PROMPT = PROMPTS_DIR / "system_v4.md"  # v1-v3 kept for comparison (see docs/PROMPTING.md)
+DEFAULT_PROMPT = PROMPTS_DIR / "system_v5.md"  # v1-v4 kept for comparison (see docs/PROMPTING.md)
 
 
 class AgentResponse(BaseModel):
