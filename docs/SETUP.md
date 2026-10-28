@@ -150,6 +150,30 @@ The Telegram bot. Keep the terminal open; **only one copy can run per bot token*
 
 For an always-on bot, see [HOSTING.md](HOSTING.md) (`docker compose up -d`).
 
+## Configuration reference
+All settings live in `.env` (git- and docker-ignored), created from [`.env.example`](../.env.example).
+
+| Variable | Required | Where it comes from |
+|---|---|---|
+| `OPENAI_API_KEY` | always | platform.openai.com → API keys |
+| `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT` | no | defaults `gpt-6-luna`, `low` |
+| `OPENAI_ADMIN_KEY` | no | platform.openai.com → Settings → Organization → Admin keys (only for `stridedj costs`) |
+| `TELEGRAM_BOT_TOKEN` | for the bot | @BotFather |
+| `TELEGRAM_ALLOWED_USER_IDS` | for the bot | @userinfobot (numeric ids, comma-separated) |
+| `TELEGRAM_MAX_MESSAGES_PER_10_MIN` | no | default 30; button presses don't count |
+| `SPOTIFY_CLIENT_ID` | live mode | Spotify dashboard → your app |
+| `SPOTIFY_RUNNING_PLAYLIST_IDS` | live mode | the 22-char id from a playlist's share link |
+| `SPOTIFY_REFRESH_TOKEN` | live mode | written by `stridedj auth spotify` |
+| `LASTFM_API_KEY` | no | last.fm/api/account/create (the key, not the shared secret) |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | live mode | Google Cloud → Google Auth Platform → Clients |
+| `GOOGLE_CALENDAR_ID`, `GOOGLE_BUSY_CALENDAR_IDS` | no | default `primary`; a dedicated "Runs" calendar is recommended |
+| `GOOGLE_REFRESH_TOKEN` | live mode | written by `stridedj auth google` |
+| `GARMIN_EMAIL`, `GARMIN_PASSWORD` | live mode | your Garmin Connect login |
+| `STRIDEDJ_RUN_SOURCE` | no | `demo` (default), `garmin`, or `intervals_icu` (plan B) |
+| `ATHLETE_TIMEZONE` | no | default `Europe/Zurich` |
+| `ATHLETE_INTERVAL_TARGET_PACES`, `ATHLETE_INTERVAL_TARGETS_SINCE` | no | starting interval targets (`400=3:45,800=4:10`) and the day you set them; without them, targets come from your last sessions |
+| `GARMIN_TOKEN_DIR`, `STRIDEDJ_DATA_DIR`, `STRIDEDJ_LOG_LEVEL` | no | defaults `~/.garminconnect`, `data/`, `INFO` |
+
 ## Troubleshooting
 | Symptom | Fix |
 |---|---|
