@@ -1,4 +1,4 @@
-# How LLM APIs work, and why OpenAI here
+# How LLM APIs work
 
 ## What a call actually is
 An LLM API is an HTTPS endpoint. You `POST` JSON, authenticated with a secret key in a header, and get JSON back (or a stream).
@@ -97,10 +97,3 @@ I use Responses for the OpenAI adapter. A local/open model would get a second ad
 
 Moving StrideDJ to Claude = one new adapter implementing `LLMClient` (≈ 150 lines). The harness, tools, evals and prompts stay; the evals would tell me whether the prompt needs changes for that model.
 
-## Why OpenAI for this project
-1. **Experience:** I've used the OpenAI SDK before. In a one-week build, familiarity lowers the risk.
-2. **Fit:** strict function calling + strict structured outputs are exactly what the harness relies on (schema-valid tool args and final answers).
-3. **Cost for evals:** `gpt-6-luna` ($0.10 / $0.50 per M tokens) makes running the whole eval suite with k=3 trials cost cents, so I can measure instead of guess, and then check whether `gpt-6.1-sol` is worth 20× the price.
-4. **Not locked in:** the provider sits behind a port. The decision is reversible by design, and the evals tell me if a switch is safe.
-
-Billing note: ChatGPT Plus and Claude Pro subscriptions don't include API usage; both APIs bill separately (prepaid credits).
