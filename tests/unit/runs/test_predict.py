@@ -179,9 +179,9 @@ def test_invalid_distance_is_rejected(predictor: DurationPredictor) -> None:
 # ─────────────────────────────── slot ───────────────────────────────
 @pytest.mark.parametrize(
     ("p80", "buffer", "expected"),
-    [(35.0, 5.0, 40), (35.1, 5.0, 45), (68.6, 5.0, 75), (0.5, 0.0, 5), (120.0, 5.0, 125)],
+    [(35.0, 5.0, 45), (40.0, 5.0, 45), (40.1, 5.0, 60), (68.6, 5.0, 75), (0.5, 0.0, 15), (120.0, 5.0, 135)],
 )
-def test_slot_is_p80_plus_buffer_rounded_up_to_5_minutes(p80: float, buffer: float, expected: int) -> None:
+def test_slot_is_p80_plus_buffer_rounded_up_to_quarter_hours(p80: float, buffer: float, expected: int) -> None:
     assert slot_minutes(p80, buffer) == expected
 
 
@@ -189,9 +189,9 @@ def test_slots_of_all_estimates_are_valid(predictor: DurationPredictor) -> None:
     for run_type in RunType:
         for km in (3.0, 5.0, 10.0, 16.0, 21.1, 42.195):
             estimate = predictor.estimate(run_type, km)
-            assert estimate.slot_min % 5 == 0
+            assert estimate.slot_min % 15 == 0
             assert estimate.slot_min >= estimate.p80_min + 5.0
-            assert estimate.slot_min < estimate.p80_min + 5.0 + 5.0
+            assert estimate.slot_min < estimate.p80_min + 5.0 + 15.0
             assert estimate.p80_min >= estimate.p50_min
 
 

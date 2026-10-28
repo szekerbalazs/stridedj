@@ -41,8 +41,8 @@ def _estimate(**overrides: object) -> DurationEstimate:
 
 def test_duration_estimate_invariants() -> None:
     assert _estimate().slot_min == 75
-    with pytest.raises(ValidationError, match="multiple of 5"):
-        _estimate(slot_min=72)
+    with pytest.raises(ValidationError, match="multiple of 15"):
+        _estimate(slot_min=70)
     with pytest.raises(ValidationError, match="p80 must be >= p50"):
         _estimate(p50_min=60.0, p80_min=58.0)
     with pytest.raises(ValidationError, match="cover p80"):

@@ -77,7 +77,7 @@ def test_the_duration_comes_from_the_structure() -> None:
     assert d.method is EstimateMethod.SESSION and d.run_type is RunType.INTERVALS
     assert d.p50_min == pytest.approx(expected, abs=0.1)
     assert d.p80_min == pytest.approx(expected * 1.06, abs=0.1)
-    assert d.slot_min % 5 == 0 and d.slot_min >= d.p80_min + 5
+    assert d.slot_min % 15 == 0 and d.slot_min >= d.p80_min + 5
 
 
 def test_a_time_limit_shrinks_the_rep_count_or_drops_the_option() -> None:
