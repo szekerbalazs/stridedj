@@ -11,6 +11,7 @@ Everything StrideDJ needs, step by step: about 45 minutes the first time. You ca
 | 4 | Google OAuth client | real calendar slots | 15 min |
 | 5 | Garmin login | your real runs | 5 min |
 | 6 | One-time logins | Spotify, Google, Garmin sessions | 5 min |
+| 7 | Last.fm API key (optional) | genres for playlists | 3 min |
 
 After each step run `make doctor`: it checks every credential (live where possible) and prints only ✓/✗/… and a hint, **never the values**.
 
@@ -116,6 +117,20 @@ make smoke
 - `auth google`: opens the browser. At *"Google hasn't verified this app"*, click **Advanced → Continue** and tick **both** permissions; the refresh token is written to `.env`.
 - `make doctor`: everything should be ✓.
 - `make smoke`: a read-only live check that prints counts only.
+
+Then download the per-second series of your past runs once (pace, heart rate, cadence; Garmin's position fields are never read or stored). They let StrideDJ find your interval sessions, which Garmin's 1-km auto-laps hide:
+```bash
+uv run stridedj series
+```
+It makes one Garmin call per run, 1.5 s apart, and can be re-run any time (it only fetches what's missing). New runs get their series automatically while the bot runs.
+
+**Optional, interval targets:** StrideDJ derives a target pace per rep distance from your last sessions. To start from your own targets instead, set `ATHLETE_INTERVAL_TARGET_PACES=400=3:45,800=4:10` and `ATHLETE_INTERVAL_TARGETS_SINCE=` (the day you set them, `YYYY-MM-DD`). Sessions after that day adapt them.
+
+## 7. Last.fm API key (optional)
+Spotify doesn't return artist genres to development-mode apps, so genres come from Last.fm tags. Without a key, playlists still work; the genre option ("Z2 tonight with techno") then finds nothing.
+1. Create a free account at [last.fm/join](https://www.last.fm/join).
+2. Open [last.fm/api/account/create](https://www.last.fm/api/account/create): any application name and a short description; **leave the callback URL and the homepage empty**.
+3. Copy only the **API key** into `.env`: `LASTFM_API_KEY=...`. The shared secret is not needed (StrideDJ never logs in as you; it only reads public artist tags).
 
 ## Run it
 ```bash
